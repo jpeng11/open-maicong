@@ -17,6 +17,15 @@ cask "maicong-studio" do
 
   app "Maicong Studio.app"
 
+  # Homebrew 7 dropped --no-quarantine. Clear Gatekeeper isolation on this
+  # unsigned Apple Silicon build so the first launch is not blocked.
+  postflight do
+    system_command "/usr/bin/xattr",
+                   args: ["-dr", "com.apple.quarantine", "#{appdir}/Maicong Studio.app"],
+                   sudo: false,
+                   must_succeed: false
+  end
+
   uninstall quit: "dev.openmaicong.studio"
 
   zap trash: [
@@ -27,10 +36,10 @@ cask "maicong-studio" do
   ]
 
   caveats <<~EOS
-    This cask ships an unsigned Apple Silicon build. Install or upgrade with
-    --no-quarantine, or allow it in System Settings → Privacy & Security
-    after the first open.
+    Unsigned Apple Silicon build. The cask clears com.apple.quarantine on
+    install. If Gatekeeper still blocks it: System Settings → Privacy &
+    Security → Open Anyway.
 
-    当前包未签名。请加 --no-quarantine，或在「系统设置 → 隐私与安全性」选择仍要打开。
+    未签名构建。cask 安装时会去掉隔离属性。若仍拦截：系统设置 → 隐私与安全性 → 仍要打开。
   EOS
 end

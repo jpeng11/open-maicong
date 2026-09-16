@@ -180,7 +180,7 @@ npm run dist    # DMG and ZIP
 Users install with:
 
 ```bash
-brew install --cask --no-quarantine jpeng11/open-maicong/maicong-studio
+brew install --cask jpeng11/open-maicong/maicong-studio
 ```
 
 That taps [`jpeng11/homebrew-open-maicong`](https://github.com/jpeng11/homebrew-open-maicong). Keep `Casks/maicong-studio.rb` in this repo in sync with the tap copy.

@@ -37,17 +37,17 @@
 ### Homebrew（推荐，Apple Silicon）
 
 ```bash
-brew install --cask --no-quarantine jpeng11/open-maicong/maicong-studio
+brew install --cask jpeng11/open-maicong/maicong-studio
 ```
 
-一条命令会自动 tap [`jpeng11/homebrew-open-maicong`](https://github.com/jpeng11/homebrew-open-maicong)，并只信任这一条 cask。当前包为 **未签名** Apple Silicon 0.1.0，`--no-quarantine` 避免 Gatekeeper 隔离。若仍拦截：系统设置 → 隐私与安全性 → 仍要打开。
+一条命令会自动 tap [`jpeng11/homebrew-open-maicong`](https://github.com/jpeng11/homebrew-open-maicong)，并只信任这一条 cask。当前包为 **未签名** Apple Silicon 0.1.0；cask 安装时会去掉 Gatekeeper 隔离属性。若仍拦截：系统设置 → 隐私与安全性 → 仍要打开。
 
 Intel Mac 请从源码运行或自行打包（`npm run dist:all`）。
 
 ```bash
-brew upgrade --cask --no-quarantine maicong-studio   # 升级
-brew uninstall --cask maicong-studio                 # 卸载
-brew uninstall --cask --zap maicong-studio           # 卸载并删除本机配置
+brew upgrade --cask maicong-studio          # 升级
+brew uninstall --cask maicong-studio        # 卸载
+brew uninstall --cask --zap maicong-studio  # 卸载并删除本机配置
 ```
 
 已安装时：

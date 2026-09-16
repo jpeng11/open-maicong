@@ -37,17 +37,17 @@ Cloud / official / Apex libraries, share-codes, CDN firmware download, and music
 ### Homebrew (recommended, Apple Silicon)
 
 ```bash
-brew install --cask --no-quarantine jpeng11/open-maicong/maicong-studio
+brew install --cask jpeng11/open-maicong/maicong-studio
 ```
 
-That one command taps [`jpeng11/homebrew-open-maicong`](https://github.com/jpeng11/homebrew-open-maicong) and trusts only this cask. The current package is an **unsigned** Apple Silicon 0.1.0 build; `--no-quarantine` skips Gatekeeper isolation. If it is still blocked: System Settings → Privacy & Security → Open Anyway.
+That one command taps [`jpeng11/homebrew-open-maicong`](https://github.com/jpeng11/homebrew-open-maicong) and trusts only this cask. The current package is an **unsigned** Apple Silicon 0.1.0 build; the cask clears Gatekeeper quarantine on install. If it is still blocked: System Settings → Privacy & Security → Open Anyway.
 
 Intel Macs: run from source or package with `npm run dist:all`.
 
 ```bash
-brew upgrade --cask --no-quarantine maicong-studio   # upgrade
-brew uninstall --cask maicong-studio                 # uninstall
-brew uninstall --cask --zap maicong-studio           # uninstall and delete local data
+brew upgrade --cask maicong-studio          # upgrade
+brew uninstall --cask maicong-studio        # uninstall
+brew uninstall --cask --zap maicong-studio  # uninstall and delete local data
 ```
 
 If it is already installed:
