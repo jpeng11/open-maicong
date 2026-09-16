@@ -1,0 +1,49 @@
+{
+  "name": "open-maicong",
+  "version": "0.1.0",
+  "description": "Standalone offline macOS configurator for MCHOSE G75 V2 keyboards via verified GLW hardware protocol",
+  "private": true,
+  "main": "src/main.cjs",
+  "author": "Open Maicong contributors",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.cjs",
+    "test:mock-ui": "electron . --mock-ui-test",
+    "smoke": "electron . --smoke-test",
+    "icon": "node scripts/generate-icon.cjs",
+    "pack": "npm run icon && electron-builder --mac --dir",
+    "dist": "npm run icon && electron-builder --mac dmg zip",
+    "dist:all": "npm run icon && electron-builder --mac dmg zip --arm64 --x64"
+  },
+  "devDependencies": {
+    "electron": "44.3.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "dev.openmaicong.studio",
+    "productName": "Maicong Studio",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "identity": null,
+      "extendInfo": {
+        "NSHumanReadableCopyright": "Unofficial community app. Not affiliated with MCHOSE."
+      }
+    }
+  },
+  "dependencies": {
+    "node-hid": "^3.4.0"
+  }
+}

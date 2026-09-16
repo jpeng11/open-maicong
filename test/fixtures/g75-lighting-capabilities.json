@@ -1,0 +1,43 @@
+{
+  "source": "docs/G75_LIGHTING_SCOPE.md catalog C flags and English locale; not copied from runtime arrays at test time",
+  "mainDisplayOrder": [0, 6, 7, 8, 9, 4, 1, 5, 3, 2, 11, 12, 10, 18, 19, 20, 21, 22, 14, 13, 15, 16, 17],
+  "mainPresetOrder": [6, 7, 8, 9, 4, 1, 5, 3, 2, 11, 12, 10, 18, 19, 20, 21, 22, 14, 13, 15, 16, 17],
+  "sideOrder": [1, 2, 3, 4],
+  "directionPairs": {
+    "row": { "0": "Left to Right", "1": "Right to Left" },
+    "col": { "0": "From top to bottom", "1": "From bottom to top" },
+    "spiral": { "0": "From the inside out", "1": "From the outside in" },
+    "clock": { "0": "Rotate counterclockwise", "1": "Rotate clockwise" }
+  },
+  "main": [
+    { "id": 0, "name": "Custom", "brightness": true, "speed": false, "color": true, "direction": null, "kinds": ["still", "gif"] },
+    { "id": 1, "name": "RainbowCycle", "brightness": true, "speed": true, "color": false, "direction": null },
+    { "id": 2, "name": "Linear Grad", "brightness": true, "speed": false, "color": true, "direction": null },
+    { "id": 3, "name": "Constant On", "brightness": true, "speed": false, "color": true, "direction": null },
+    { "id": 4, "name": "Breath", "brightness": true, "speed": true, "color": true, "direction": null },
+    { "id": 5, "name": "Disco", "brightness": true, "speed": true, "color": false, "direction": null },
+    { "id": 6, "name": "Horiz Wave", "brightness": true, "speed": true, "color": true, "direction": "row" },
+    { "id": 7, "name": "Vert Wave", "brightness": true, "speed": true, "color": true, "direction": "col" },
+    { "id": 8, "name": "Center Spread", "brightness": true, "speed": true, "color": true, "direction": "spiral" },
+    { "id": 9, "name": "Star Twinkle", "brightness": true, "speed": true, "color": true, "direction": null },
+    { "id": 10, "name": "Center Spin", "brightness": true, "speed": true, "color": true, "direction": "clock" },
+    { "id": 11, "name": "Bottom Up", "brightness": true, "speed": true, "color": true, "direction": null },
+    { "id": 12, "name": "Recip Rebound", "brightness": true, "speed": true, "color": true, "direction": null },
+    { "id": 13, "name": "Key Ripple", "brightness": true, "speed": true, "color": true, "direction": null },
+    { "id": 14, "name": "Solid Ripple", "brightness": true, "speed": true, "color": true, "direction": null },
+    { "id": 15, "name": "Key Trail", "brightness": true, "speed": true, "color": true, "direction": null },
+    { "id": 16, "name": "Key Firework", "brightness": true, "speed": true, "color": true, "direction": null },
+    { "id": 17, "name": "Key Beam", "brightness": true, "speed": true, "color": true, "direction": null },
+    { "id": 18, "name": "Diag Flow", "brightness": true, "speed": true, "color": true, "direction": null },
+    { "id": 19, "name": "Laser Rain", "brightness": true, "speed": true, "color": true, "direction": null },
+    { "id": 20, "name": "Dot Twinkle", "brightness": true, "speed": true, "color": true, "direction": null },
+    { "id": 21, "name": "Fireworks", "brightness": true, "speed": true, "color": true, "direction": null },
+    { "id": 22, "name": "Triangle Bounce", "brightness": true, "speed": true, "color": true, "direction": null }
+  ],
+  "side": [
+    { "id": 1, "name": "RainbowCycle", "brightness": true, "speed": true, "color": false, "direction": null },
+    { "id": 2, "name": "Constant On", "brightness": true, "speed": false, "color": true, "direction": null },
+    { "id": 3, "name": "Breath", "brightness": true, "speed": true, "color": true, "direction": null },
+    { "id": 4, "name": "Off", "brightness": false, "speed": false, "color": false, "direction": null }
+  ]
+}

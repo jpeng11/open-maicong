@@ -1,0 +1,6 @@
+node_modules/
+dist/
+test-artifacts/
+artifacts/
+build/AppIcon.iconset/
+.DS_Store

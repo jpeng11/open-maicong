@@ -1,0 +1,1290 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Maicong Studio — G75 V2 Configurator</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true">
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></symbol>
+    <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 4l8 4-8 4-8-4 8-4zM4 12l8 4 8-4M4 16l8 4 8-4"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 8h10M18 8h2M4 16h2M10 16h10M14 6v4M8 14v4"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 7h12M8 12h12M8 17h12M4 7h.01M4 12h.01M4 17h.01"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M4 8l8-4 8 4v8l-8 4-8-4V8zM4 8l8 4 8-4M12 12v8"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M5 5h9a3 3 0 013 3v11H8a3 3 0 00-3 3V5z"/><path d="M8 19h10"/></symbol>
+    <symbol id="i-battery" viewBox="0 0 24 24"><rect x="3" y="8" width="16" height="8" rx="1.5"/><path d="M21 11v2"/></symbol>
+    <symbol id="i-radio" viewBox="0 0 24 24"><path d="M5 16a7 7 0 0114 0M8.5 16a3.5 3.5 0 017 0"/><circle cx="12" cy="16" r="1"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 10-2.3 5.5M20 12v-5m0 5h-5"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5h.01"/></symbol>
+    <symbol id="i-tool" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 00-5.4 5.4L4 17l3 3 5.3-5.3a4 4 0 005.4-5.4L16 11l-3-3 1.7-1.7z"/></symbol>
+  </svg>
+
+  <header id="main-header" class="os-titlebar">
+    <div class="title-brand">
+      <span class="app-title">Maicong Studio</span>
+      <span class="edition">Unofficial G75 V2</span>
+    </div>
+    <div class="titlebar-actions">
+      <button id="btn-scan" class="nav-btn" data-action="scan" title="Scan and reconnect MCHOSE USB hardware">
+        <svg class="line-icon"><use href="#i-search"/></svg> Scan
+      </button>
+      <button id="btn-refresh" class="nav-btn" data-action="refresh-status" title="Refresh hardware state">
+        <svg class="line-icon"><use href="#i-refresh"/></svg> Refresh
+      </button>
+    </div>
+  </header>
+
+  <div class="hub-shell">
+    <aside class="device-sidebar" aria-label="Device and profiles">
+      <div class="sidebar-head">
+        <div id="sidebar-device-name" class="device-name" title="MCHOSE G75 V2">G75 V2</div>
+        <div class="device-meta">
+          <div id="battery-stat" class="meta-item" title="Device Battery Level">
+            <svg class="line-icon"><use href="#i-battery"/></svg>
+            <span id="battery-stat-text">--%</span>
+          </div>
+          <div class="meta-item">
+            <div id="device-connection-pill" class="connection-pill disconnected">
+              <span class="pill-dot"></span>
+              <svg class="line-icon"><use href="#i-radio"/></svg>
+              <span id="device-status-text">Offline</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="edit-target-bar" class="sidebar-edit">
+        <div class="edit-target-group">
+          <span class="selector-label">Edit target</span>
+          <select id="edit-profile-select" class="form-select inline" aria-label="Profile to edit">
+            <option value="0">Profile 1</option>
+            <option value="1">Profile 2</option>
+            <option value="2">Profile 3</option>
+            <option value="3">Profile 4</option>
+          </select>
+          <button class="action-btn" id="btn-load-edit-target" data-action="load-edit-target">Load for editing</button>
+          <button class="action-btn primary" id="btn-activate-profile" data-action="activate-edit-profile">Activate on keyboard</button>
+          <button class="action-btn" id="btn-enable-fourth" data-action="enable-fourth-profile">Enable 4th profile</button>
+        </div>
+        <div class="edit-target-status">
+          <span id="hardware-active-label">Hardware active: Profile 1</span>
+          <span class="sep">·</span>
+          <span id="editing-label">Editing: Profile 1</span>
+        </div>
+        <div id="active-profile-stat" class="edit-target-status">
+          <span id="profile-stat-text">Profile 1</span>
+        </div>
+      </div>
+
+      <div id="profile-selector-group" class="sidebar-profiles">
+        <div class="profile-library-head">
+          <span>Onboard</span>
+          <span id="profile-library-capacity" class="field-hint">0/20</span>
+        </div>
+        <p class="profile-library-hint">Stored on the keyboard. Load edits without activating. Drag a custom profile onto a slot to write it.</p>
+        <div id="onboard-profile-list"></div>
+        <div id="profile-free-slot" class="profile-drop-slot" data-drop="free-slot" hidden>Empty onboard slot — drop a custom profile here</div>
+        <div class="profile-library-head">
+          <span>Custom</span>
+          <div class="profile-library-actions">
+            <button type="button" class="action-btn" data-action="create-local-profile" id="btn-create-local-profile">Add Local</button>
+            <button type="button" class="action-btn" data-action="import-official-profile" id="btn-import-official-profile">Import</button>
+          </div>
+        </div>
+        <p class="profile-library-hint">Stored on this Mac for this keyboard. Preview does not write the device. Drag onto onboard to use.</p>
+        <div id="local-profile-list"></div>
+        <p id="profile-library-status" class="field-hint profile-library-status" role="status" aria-live="polite"></p>
+        <div id="profile-library-progress" class="profile-library-progress" hidden>
+          <div class="profile-progress-bar" id="profile-progress-bar"></div>
+          <span id="profile-library-progress-text">Writing configuration to onboard…</span>
+        </div>
+      </div>
+    </aside>
+
+    <section class="workspace" aria-label="Editor workspace">
+      <nav class="workspace-tabs" aria-label="Feature navigation">
+        <div class="view-tabs" role="tablist">
+          <button id="tab-lighting" class="tab" role="tab" aria-selected="false" data-action="set-tab" data-tab="lighting">
+            <svg class="line-icon lg"><use href="#i-sun"/></svg>
+            <span class="tab-label">Lighting</span>
+          </button>
+          <button id="tab-keymap" class="tab" role="tab" aria-selected="false" data-action="set-tab" data-tab="keymap">
+            <svg class="line-icon lg"><use href="#i-keyboard"/></svg>
+            <span class="tab-label">Key settings</span>
+          </button>
+          <button id="tab-advanced" class="tab" role="tab" aria-selected="false" data-action="set-tab" data-tab="advanced">
+            <svg class="line-icon lg"><use href="#i-layers"/></svg>
+            <span class="tab-label">Advanced keys</span>
+          </button>
+          <button id="tab-settings" class="tab" role="tab" aria-selected="false" data-action="set-tab" data-tab="settings">
+            <svg class="line-icon lg"><use href="#i-sliders"/></svg>
+            <span class="tab-label">Performance</span>
+          </button>
+          <button id="tab-macros" class="tab" role="tab" aria-selected="false" data-action="set-tab" data-tab="macros">
+            <svg class="line-icon lg"><use href="#i-list"/></svg>
+            <span class="tab-label">Macros</span>
+          </button>
+          <button id="tab-dashboard" class="tab tab-secondary active" role="tab" aria-selected="true" data-action="set-tab" data-tab="dashboard">
+            <svg class="line-icon lg"><use href="#i-grid"/></svg>
+            <span class="tab-label">Overview</span>
+          </button>
+          <button id="tab-profiles" class="tab tab-secondary" role="tab" aria-selected="false" data-action="set-tab" data-tab="profiles">
+            <svg class="line-icon lg"><use href="#i-box"/></svg>
+            <span class="tab-label">Backup</span>
+          </button>
+          <button id="tab-others" class="tab tab-secondary" role="tab" aria-selected="false" data-action="set-tab" data-tab="others">
+            <svg class="line-icon lg"><use href="#i-tool"/></svg>
+            <span class="tab-label">Others</span>
+          </button>
+          <button id="tab-guide" class="tab tab-secondary" role="tab" aria-selected="false" data-action="set-tab" data-tab="guide">
+            <svg class="line-icon lg"><use href="#i-book"/></svg>
+            <span class="tab-label">Guide</span>
+          </button>
+        </div>
+      </nav>
+
+      <main id="main-content">
+        <div id="toast-banner" class="toast-banner" hidden>
+          <span id="toast-icon" class="toast-icon" aria-hidden="true"></span>
+          <span id="toast-message">Message</span>
+        </div>
+
+    <!-- TAB 1: DASHBOARD -->
+    <section id="panel-dashboard" class="view-panel active">
+      <div class="panel-header">
+        <div>
+          <span class="eyebrow">HARDWARE OVERVIEW</span>
+          <h1>Device Status & Dashboard</h1>
+          <p class="subtitle">Connection, firmware, battery, and onboard profiles.</p>
+        </div>
+      </div>
+
+      <div class="dashboard-grid">
+        <!-- Card 1: Connection & Hardware Spec -->
+        <div class="dash-card">
+          <div class="dash-card-header">
+            <span class="card-icon"><svg class="line-icon"><use href="#i-grid"/></svg></span>
+            <h2>Hardware Overview</h2>
+          </div>
+          <div class="stats-list">
+            <div class="stat-row">
+              <span class="stat-label">Model</span>
+              <span id="dash-product" class="stat-value">MCHOSE G75 V2</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Connection</span>
+              <span id="dash-transport" class="stat-value">2.4GHz Wireless Receiver</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">USB VID : PID</span>
+              <span id="dash-vidpid" class="stat-value font-mono">0x3837 : 0x3033</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Wireless Receiver</span>
+              <span id="dash-dongle" class="stat-value font-mono">2.4G Dongle</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Firmware Build Date</span>
+              <span id="dash-builddate" class="stat-value font-mono">Jan 12 2026, 20:41:47</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Keyboard MCU Firmware</span>
+              <span id="dash-fw" class="stat-value font-mono">1.14</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">RF Wireless Firmware</span>
+              <span id="dash-rffw" class="stat-value font-mono">1.30</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card 2: Battery & Power Telemetry -->
+        <div class="dash-card">
+          <div class="dash-card-header">
+            <span class="card-icon"><svg class="line-icon"><use href="#i-battery"/></svg></span>
+            <h2>Battery & Power</h2>
+          </div>
+          <div class="battery-display">
+            <div class="battery-gauge-container">
+              <div id="battery-bar" class="battery-bar" style="width: 100%;"></div>
+            </div>
+            <div class="battery-numbers">
+              <span id="battery-large-text" class="battery-large">100%</span>
+              <span id="charging-badge" class="badge badge-subtle">Discharging</span>
+            </div>
+          </div>
+          <p class="card-note">Hardware battery telemetry</p>
+        </div>
+
+        <div class="dash-card full-width">
+          <div class="dash-card-header">
+            <span class="card-icon"><svg class="line-icon"><use href="#i-box"/></svg></span>
+            <h2>Onboard profiles</h2>
+          </div>
+          <p class="subtitle">Profiles are listed on the left. Load for editing does not switch the keyboard; Activate on keyboard does.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: KEY MAPPING -->
+    <section id="panel-keymap" class="view-panel" hidden>
+      <div class="panel-header">
+        <div>
+          <span class="eyebrow">KEY REMAPPING & LAYERS</span>
+          <h1>Key settings</h1>
+          <p class="subtitle">Four layers: Windows, Windows + Fn, macOS, macOS + Fn. Drag or click a command onto a key. Onboard edits save automatically; custom preview stays on this Mac.</p>
+        </div>
+        <div class="panel-header-actions">
+          <p class="keymap-save-status" id="keymap-save-status" role="status" aria-live="polite"></p>
+          <button class="action-btn" data-action="read-layer">Read Layer from Device</button>
+          <button class="action-btn primary" id="btn-apply-keymap" data-action="apply-keymap" disabled>Apply Keymap to Keyboard</button>
+        </div>
+      </div>
+
+      <!-- Layer Tabs -->
+      <div class="layer-selector-bar">
+        <span class="selector-label">Editing layer:</span>
+        <div class="button-toggle-group">
+          <button class="toggle-btn active" data-action="set-layer" data-layer="0">Layer 0 (Win Normal)</button>
+          <button class="toggle-btn" data-action="set-layer" data-layer="1">Layer 1 (Win + Fn)</button>
+          <button class="toggle-btn" data-action="set-layer" data-layer="2">Layer 2 (Mac Normal)</button>
+          <button class="toggle-btn" data-action="set-layer" data-layer="3">Layer 3 (Mac + Fn)</button>
+        </div>
+        <button class="action-btn danger-subtle" id="btn-restore-defaults" data-action="restore-defaults" disabled>Restore defaults</button>
+      </div>
+
+      <div class="keyboard-stage">
+        <div class="keyboard-scale">
+          <div class="keyboard-case">
+            <div id="keyboard-keys-container" class="keyboard-layout-grid"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Key Inspector & Remap Palette -->
+      <div class="keymap-controls-grid">
+        <div class="selected-key-card">
+          <h3>Selected Key</h3>
+          <div class="selected-key-details">
+            <div id="inspector-key-box" class="key-preview-box">ESC</div>
+            <div class="key-meta">
+              <div class="key-meta-title" id="inspector-key-name">Escape</div>
+              <div class="key-meta-sub" id="inspector-key-info">Index: 1 · HID Code: 41 (0x29)</div>
+              <div class="key-assigned-badge" id="inspector-assigned-info">Assigned: Escape</div>
+            </div>
+          </div>
+          <p class="field-hint" id="keymap-assign-hint">Drag or click the command to the target key to assign.</p>
+          <div class="keymap-binding-actions">
+            <button type="button" class="action-btn" id="btn-key-copy" data-action="copy-key">Copy</button>
+            <button type="button" class="action-btn" id="btn-key-cut" data-action="cut-key">Cut</button>
+            <button type="button" class="action-btn" id="btn-key-paste" data-action="paste-key">Paste</button>
+          </div>
+          <div class="keymap-recorder">
+            <span class="selector-label">Shortcut Record</span>
+            <button type="button" class="action-btn" id="btn-key-record" data-action="toggle-key-record">Record</button>
+            <div id="key-record-capture" class="key-record-capture" tabindex="0">Click here, then Record. Pause and Resume use the same button. There is no Cancel control.</div>
+          </div>
+        </div>
+
+        <div class="remap-palette-card">
+          <div class="palette-header">
+            <div>
+              <h3>Assign New Key</h3>
+              <div class="modifier-chords-group" style="display: flex; gap: 10px; align-items: center; margin-top: 6px; font-size: 12px; color: var(--text-secondary);">
+                <span style="font-weight: 500;">Chord:</span>
+                <label style="cursor: pointer; display: flex; align-items: center; gap: 4px;"><input type="checkbox" id="chord-ctrl"> Ctrl</label>
+                <label style="cursor: pointer; display: flex; align-items: center; gap: 4px;"><input type="checkbox" id="chord-shift"> Shift</label>
+                <label style="cursor: pointer; display: flex; align-items: center; gap: 4px;"><input type="checkbox" id="chord-alt"> Alt/Opt</label>
+                <label style="cursor: pointer; display: flex; align-items: center; gap: 4px;"><input type="checkbox" id="chord-gui"> Win/Cmd</label>
+              </div>
+            </div>
+            <div id="palette-category-tabs" class="palette-categories">
+              <!-- Rendered categories -->
+            </div>
+          </div>
+          <div id="palette-keys-container" class="palette-grid">
+            <!-- Palette keys -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: RGB LIGHTING -->
+    <section id="panel-lighting" class="view-panel" hidden>
+      <div class="panel-header">
+        <div>
+          <span class="eyebrow">RGB ILLUMINATION</span>
+          <h1>Lighting & Backlight</h1>
+          <p class="subtitle">Built-in backlight effects, local static lighting, and the side indicator.</p>
+        </div>
+        <div class="panel-header-actions">
+          <p class="lighting-save-status" id="lighting-save-status" role="status" aria-live="polite"></p>
+          <button type="button" class="action-btn" id="btn-retry-lighting-save" data-action="retry-lighting-save" hidden>Retry</button>
+          <button class="action-btn" id="btn-read-lighting" data-action="read-lighting" disabled>Read from Device</button>
+          <button class="action-btn primary" id="btn-apply-lighting" data-action="apply-lighting" hidden disabled>Apply Lighting to Device</button>
+        </div>
+      </div>
+
+      <div class="keyboard-stage">
+        <div class="keyboard-scale">
+          <div class="keyboard-case">
+            <div id="lighting-keys-container" class="keyboard-layout-grid"></div>
+          </div>
+        </div>
+      </div>
+      <p class="field-hint lighting-zone-hint">83 lighting zones. The knob has no LED.</p>
+
+      <div class="lighting-memory-pref" id="lighting-memory-pref">
+        <span class="lighting-memory-label">Remembered effects</span>
+        <div class="scope-tabs" role="radiogroup" aria-label="Where remembered lighting effects are stored">
+          <button type="button" class="scope-tab active" id="light-mem-keyboard" data-action="set-light-memory-fallback" data-fallback="hardware" aria-pressed="true">On keyboard</button>
+          <button type="button" class="scope-tab" id="light-mem-mac" data-action="set-light-memory-fallback" data-fallback="local" aria-pressed="false">This Mac</button>
+        </div>
+        <p class="field-hint" id="lighting-memory-hint">On the keyboard. A successful read does not prove writes.</p>
+      </div>
+
+      <div class="lighting-workspace">
+        <section class="lighting-pane" id="lighting-pane-effects">
+          <div class="lighting-pane-header">
+            <h2>Effects</h2>
+            <div class="scope-tabs" role="tablist" aria-label="Lighting scope">
+              <button type="button" class="scope-tab active" id="light-scope-main" data-action="set-light-scope" data-scope="main" role="tab" aria-selected="true">Main</button>
+              <button type="button" class="scope-tab" id="light-scope-side" data-action="set-light-scope" data-scope="side" role="tab" aria-selected="false">Side</button>
+            </div>
+          </div>
+          <div class="lighting-pane-body">
+            <div class="scope-tabs lighting-main-tabs" id="lighting-main-tabs" role="tablist" aria-label="Main lighting library">
+              <button type="button" class="scope-tab active" id="light-main-tab-normal" data-action="set-main-light-tab" data-tab="normal" role="tab" aria-selected="true">Normal light</button>
+              <button type="button" class="scope-tab" id="btn-custom-lighting" data-action="set-main-light-tab" data-tab="local" role="tab" aria-selected="false" aria-pressed="false">Custom</button>
+            </div>
+            <p class="field-hint" id="custom-lighting-hint">Local custom lighting: static effects and animated GIF streaming. Cloud library is not in this build.</p>
+            <p id="lighting-unrecognized" class="field-hint" hidden>Unrecognized lighting effect. The value from the keyboard is kept.</p>
+            <div id="main-effect-grid" class="effect-tile-grid" aria-label="Main lighting effects"></div>
+            <div id="still-library-section" hidden>
+              <div class="still-library-header">
+                <h3>Static Lighting</h3>
+                <span id="still-library-count" class="field-hint">0/20</span>
+                <button type="button" class="action-btn" id="btn-still-create" data-action="create-still">Add Static</button>
+              </div>
+              <div id="still-library-list" class="effect-tile-grid" aria-label="Static lighting library"></div>
+              <p id="still-library-status" class="field-hint still-library-status" role="status" aria-live="polite" hidden></p>
+              <span class="field-hint" id="gif-library-hint" hidden>GIF lighting library is not in this build.</span>
+            </div>
+            <div id="gif-library-section" hidden>
+              <div class="gif-library-header">
+                <h3>GIF Animation</h3>
+                <span id="gif-library-count" class="field-hint">0/20</span>
+                <input type="file" id="gif-file-input" accept=".gif" hidden>
+                <button type="button" class="action-btn" id="btn-gif-import" data-action="import-gif">Import GIF</button>
+              </div>
+              <div class="gif-playback-bar" id="gif-playback-bar">
+                <button type="button" class="action-btn" id="btn-gif-play-pause" data-action="toggle-gif-playback" disabled>Play</button>
+                <button type="button" class="action-btn" id="btn-gif-stop" data-action="stop-gif-playback" disabled>Stop</button>
+                <span id="gif-playback-status" class="field-hint">No GIF streaming</span>
+              </div>
+              <div id="gif-library-list" class="effect-tile-grid" aria-label="GIF animation library"></div>
+              <p id="gif-library-status" class="field-hint gif-library-status" role="status" aria-live="polite" hidden></p>
+            </div>
+            <div id="side-effect-grid" class="effect-tile-grid" aria-label="Side lighting effects" hidden></div>
+          </div>
+        </section>
+
+        <section class="lighting-pane" id="lighting-pane-motion">
+          <div class="lighting-pane-header">
+            <h2>Speed / Brightness / Direction</h2>
+          </div>
+          <div class="lighting-pane-body">
+            <div id="main-brightness-group" class="form-group">
+              <div class="label-with-value">
+                <label for="light-brightness-slider">Brightness</label>
+                <span id="light-brightness-val" class="slider-val">100%</span>
+              </div>
+              <input type="range" id="light-brightness-slider" min="0" max="100" value="100" class="form-range">
+            </div>
+            <div id="main-speed-group" class="form-group">
+              <div class="label-with-value">
+                <label for="light-speed-slider">Speed</label>
+                <span id="light-speed-val" class="slider-val">4</span>
+              </div>
+              <input type="range" id="light-speed-slider" min="0" max="4" value="4" class="form-range">
+            </div>
+            <div id="main-direction-group" class="form-group">
+              <label>Direction</label>
+              <div class="button-toggle-group">
+                <button type="button" id="btn-dir-left" class="toggle-btn active" data-action="set-direction" data-dir="0" aria-pressed="true">Left to Right</button>
+                <button type="button" id="btn-dir-right" class="toggle-btn" data-action="set-direction" data-dir="1" aria-pressed="false">Right to Left</button>
+              </div>
+            </div>
+            <div id="side-brightness-group" class="form-group" hidden>
+              <div class="label-with-value">
+                <label for="side-brightness-slider">Brightness</label>
+                <span id="side-brightness-val" class="slider-val">80%</span>
+              </div>
+              <input type="range" id="side-brightness-slider" min="0" max="100" value="80" class="form-range">
+            </div>
+            <div id="side-speed-group" class="form-group" hidden>
+              <div class="label-with-value">
+                <label for="side-speed-slider">Speed</label>
+                <span id="side-speed-val" class="slider-val">4</span>
+              </div>
+              <input type="range" id="side-speed-slider" min="0" max="4" value="4" class="form-range">
+            </div>
+          </div>
+        </section>
+
+        <section class="lighting-pane" id="lighting-pane-color">
+          <div class="lighting-pane-header">
+            <h2>Color</h2>
+          </div>
+          <div class="lighting-pane-body">
+            <div id="main-color-group" class="form-group">
+              <div class="label-with-value">
+                <label for="light-custom-color-toggle">Solid color</label>
+                <input type="checkbox" id="light-custom-color-toggle" checked>
+              </div>
+              <div class="color-picker-row">
+                <input type="color" id="light-color-input" value="#00E5FF" class="color-swatch-input">
+                <input type="text" id="light-color-hex" value="#00E5FF" class="form-input font-mono" maxlength="7">
+              </div>
+              <div class="color-preset-swatches">
+                <button type="button" class="color-dot" style="background:#00E5FF;" data-color="#00E5FF" title="Cyan"></button>
+                <button type="button" class="color-dot" style="background:#10B981;" data-color="#10B981" title="Emerald"></button>
+                <button type="button" class="color-dot" style="background:#3B82F6;" data-color="#3B82F6" title="Blue"></button>
+                <button type="button" class="color-dot" style="background:#8B5CF6;" data-color="#8B5CF6" title="Purple"></button>
+                <button type="button" class="color-dot" style="background:#EC4899;" data-color="#EC4899" title="Pink"></button>
+                <button type="button" class="color-dot" style="background:#EF4444;" data-color="#EF4444" title="Red"></button>
+                <button type="button" class="color-dot" style="background:#F59E0B;" data-color="#F59E0B" title="Amber"></button>
+                <button type="button" class="color-dot" style="background:#FFFFFF;" data-color="#FFFFFF" title="Pure White"></button>
+              </div>
+            </div>
+            <div id="side-color-group" class="form-group" hidden>
+              <div class="label-with-value">
+                <label for="side-custom-color-toggle">Solid color</label>
+                <input type="checkbox" id="side-custom-color-toggle" checked>
+              </div>
+              <div class="color-picker-row">
+                <input type="color" id="side-color-input" value="#00E5FF" class="color-swatch-input">
+                <input type="text" id="side-color-hex" value="#00E5FF" class="form-input font-mono" maxlength="7">
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div id="custom-lighting-panel" hidden>
+        <p class="field-hint" id="still-edit-hint">Paint the 83 lighting zones. Still colors save to the selected local still after 300 ms. GIF library is not in this build.</p>
+        <div class="per-key-rgb-toolbar">
+          <div class="per-key-rgb-controls">
+            <span class="toolbar-label">Paint color</span>
+            <input type="color" id="perkey-color-input" value="#00E5FF" class="color-swatch-input">
+            <input type="text" id="perkey-color-hex" value="#00E5FF" class="form-input font-mono" maxlength="7" style="width: 100px;">
+            <button class="action-btn" data-action="set-selected-key-color">Paint Selected</button>
+            <button class="action-btn" data-action="fill-all-key-colors">Fill All Keys</button>
+            <button class="action-btn danger-subtle" data-action="clear-all-key-colors">Clear to Black</button>
+          </div>
+          <div class="per-key-rgb-actions">
+            <button class="action-btn" data-action="read-key-colors">Read from Device</button>
+            <button class="action-btn primary" id="btn-apply-key-colors" data-action="apply-key-colors" disabled>Apply Per-Key RGB to Device</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="white-balance-row">
+        <h2>White balance</h2>
+        <p class="field-hint">Adjusts backlight white. Apply White Balance to save.</p>
+        <div class="white-balance-sliders">
+          <div class="form-group">
+            <div class="label-with-value"><label for="cal-r">Red</label><span id="cal-r-val" class="slider-val">255</span></div>
+            <input type="range" id="cal-r" min="0" max="255" value="255" class="form-range">
+          </div>
+          <div class="form-group">
+            <div class="label-with-value"><label for="cal-g">Green</label><span id="cal-g-val" class="slider-val">255</span></div>
+            <input type="range" id="cal-g" min="0" max="255" value="255" class="form-range">
+          </div>
+          <div class="form-group">
+            <div class="label-with-value"><label for="cal-b">Blue</label><span id="cal-b-val" class="slider-val">255</span></div>
+            <input type="range" id="cal-b" min="0" max="255" value="255" class="form-range">
+          </div>
+        </div>
+        <button class="action-btn primary" id="btn-apply-calibration" data-action="apply-calibration">Apply White Balance</button>
+      </div>
+    </section>
+
+    <!-- TAB: ADVANCED MT / TGL / SOCD -->
+    <section id="panel-advanced" class="view-panel" hidden>
+      <div class="panel-header">
+        <div>
+          <span class="eyebrow">ADVANCED KEYS</span>
+          <h1>Advanced Keys</h1>
+          <p class="subtitle">Select a function to edit the corresponding key. Fn and the knob cannot use these bindings. Rapid Trigger and analog magnetic keys are not available on G75 V2.</p>
+        </div>
+        <div class="panel-header-actions">
+          <button class="action-btn" data-action="read-advanced">Read Advanced Tables</button>
+          <button class="action-btn danger-subtle" id="btn-clear-all-advanced" data-action="clear-all-advanced">Clear all advanced</button>
+        </div>
+      </div>
+      <div class="keyboard-stage">
+        <div class="keyboard-scale">
+          <div class="keyboard-case">
+            <div id="advanced-keys-container" class="keyboard-layout-grid"></div>
+          </div>
+        </div>
+      </div>
+      <div id="advanced-hub-grid" class="advanced-hub-grid">
+        <section class="advanced-hub-col" aria-labelledby="adv-col-types-title">
+          <div class="advanced-hub-col-head">
+            <h2 id="adv-col-types-title">Advanced Keys</h2>
+            <p class="advanced-hub-desc">Select a function to edit the corresponding key</p>
+          </div>
+          <div id="advanced-type-cards" class="adv-type-cards">
+            <button type="button" class="adv-type-card" data-action="adv-type" data-kind="socd" id="adv-type-socd">
+              <span class="adv-type-icon" aria-hidden="true">SOCD</span>
+              <span class="adv-type-copy">
+                <span class="adv-type-name">SOCD</span>
+                <span class="adv-type-desc">Inputs triggered based on rules</span>
+              </span>
+            </button>
+            <button type="button" class="adv-type-card" data-action="adv-type" data-kind="mt" id="adv-type-mt">
+              <span class="adv-type-icon" aria-hidden="true">MT</span>
+              <span class="adv-type-copy">
+                <span class="adv-type-name">Hold/Tap (MT)</span>
+                <span class="adv-type-desc">One key achieves 2 functions: Hold for one, Tap for another.</span>
+              </span>
+            </button>
+            <button type="button" class="adv-type-card" data-action="adv-type" data-kind="tgl" id="adv-type-tgl">
+              <span class="adv-type-icon" aria-hidden="true">TGL</span>
+              <span class="adv-type-copy">
+                <span class="adv-type-name">Toggle switch (TGL)</span>
+                <span class="adv-type-desc">Click once to toggle hold, click again to release</span>
+              </span>
+            </button>
+            <button type="button" class="adv-type-card" data-action="adv-type" data-kind="cb" id="adv-type-cb">
+              <span class="adv-type-icon" aria-hidden="true">CB</span>
+              <span class="adv-type-copy">
+                <span class="adv-type-name">Key Combination (CB)</span>
+                <span class="adv-type-desc">One-key shortcut【modifier + key】</span>
+              </span>
+            </button>
+          </div>
+          <div class="adv-editor-block">
+            <div class="form-group">
+              <label for="adv-key-select">Physical key</label>
+              <select id="adv-key-select" class="form-select" aria-label="Physical key for advanced binding"></select>
+            </div>
+            <p id="advanced-selected-info">Choose a physical key here or on the Key Mapping tab. Apply writes only when you click Apply Advanced Binding.</p>
+            <p id="advanced-current-binding" class="field-hint">No advanced binding loaded.</p>
+            <p id="advanced-table-usage" class="field-hint">MT 0/32 · TGL 0/32 referenced</p>
+            <input type="hidden" id="adv-kind" value="mt">
+            <p id="adv-kind-label" class="field-hint">Binding type: Hold/Tap (MT)</p>
+          <div id="adv-mt-fields">
+            <div class="form-group">
+              <label for="adv-tap-select">Tap key</label>
+              <select id="adv-tap-select" class="form-select"></select>
+            </div>
+            <div class="form-group">
+              <label for="adv-hold-select">Hold key</label>
+              <select id="adv-hold-select" class="form-select"></select>
+            </div>
+            <div class="form-group">
+              <div class="label-with-value"><label for="adv-delay">Tap-hold delay</label><span id="adv-delay-val" class="slider-val">150 ms</span></div>
+              <input type="range" id="adv-delay" min="0" max="1000" step="10" value="150" class="form-range">
+            </div>
+          </div>
+          <div id="adv-tgl-fields" hidden>
+            <div class="form-group">
+              <label for="adv-target-select">Toggle target</label>
+              <select id="adv-target-select" class="form-select"></select>
+            </div>
+          </div>
+          <div id="adv-cb-fields" hidden>
+            <div class="form-group">
+              <label for="adv-cb-modifier">Modifier</label>
+              <select id="adv-cb-modifier" class="form-select" aria-label="Combo modifier key"></select>
+            </div>
+            <div class="form-group">
+              <label for="adv-cb-regular">Regular key</label>
+              <select id="adv-cb-regular" class="form-select" aria-label="Combo regular key"></select>
+            </div>
+            <p class="field-hint">Choose a modifier and a regular key to press together.</p>
+          </div>
+          <div id="adv-socd-fields" hidden>
+            <div class="form-group">
+              <label for="adv-partner-select">Partner key</label>
+              <select id="adv-partner-select" class="form-select"></select>
+            </div>
+            <div class="form-group">
+              <label for="adv-priority">SOCD priority (profile-wide extras)</label>
+              <select id="adv-priority" class="form-select">
+                <option value="0">Last Input Priority</option>
+                <option value="1">Absolute Priority Key 1</option>
+                <option value="2">Absolute Priority Key 2</option>
+                <option value="3">Cancel Mode</option>
+              </select>
+            </div>
+          </div>
+            <div class="panel-header-actions" style="margin-top: 12px;">
+              <button class="action-btn primary" id="btn-apply-advanced" data-action="apply-advanced">Apply Advanced Binding</button>
+              <button class="action-btn danger-subtle" id="btn-remove-advanced" data-action="remove-advanced">Remove Binding</button>
+            </div>
+            <p id="advanced-error" class="field-hint" hidden></p>
+          </div>
+        </section>
+        <section class="advanced-hub-col" aria-labelledby="adv-col-list-title">
+          <div class="advanced-hub-col-head">
+            <h2 id="adv-col-list-title">Current Binding <span id="advanced-binding-count">0/40</span></h2>
+          </div>
+          <div id="advanced-binding-list" class="adv-binding-list" role="list"></div>
+          <p id="advanced-binding-empty" class="advanced-hub-desc">No advanced bindings on this profile.</p>
+        </section>
+        <section class="advanced-hub-col" aria-labelledby="adv-col-test-title">
+          <div class="advanced-hub-col-head">
+            <h2 id="adv-col-test-title">Test Your Binding</h2>
+          </div>
+          <div class="adv-test-block">
+            <div class="adv-test-label">Press Test</div>
+            <ul id="adv-test-press" class="adv-test-list" aria-label="Press test"></ul>
+          </div>
+          <div class="adv-test-block">
+            <div class="adv-test-label">Release Test</div>
+            <ul id="adv-test-release" class="adv-test-list" aria-label="Release test"></ul>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <!-- TAB 4: MACROS -->
+    <section id="panel-macros" class="view-panel" hidden>
+      <div class="panel-header">
+        <div>
+          <span class="eyebrow">AUTOMATION & RECORDING</span>
+          <h1>Hardware Macro Studio</h1>
+          <p class="subtitle">16 macros stored on the keyboard. Record, pause, and edit actions, then upload. Names stay in this app.</p>
+        </div>
+        <div class="panel-header-actions">
+          <button class="action-btn" data-action="read-macros">Read from Device</button>
+          <button class="action-btn primary" id="btn-apply-macros" data-action="apply-macros" disabled>Upload Macros to Device</button>
+        </div>
+      </div>
+
+      <div class="macros-workspace-grid">
+        <!-- Sidebar: 16 Slots -->
+        <div class="macros-slots-sidebar">
+          <h3>Macro Slots</h3>
+          <div id="macro-slots-list" class="macro-slots-list">
+            <!-- 16 macro slots -->
+          </div>
+        </div>
+
+        <!-- Editor for Selected Slot -->
+        <div class="macro-editor-card">
+          <div class="macro-editor-header">
+            <div>
+              <h2 id="macro-editor-title">Macro 1</h2>
+              <div class="macro-playback-group" style="display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap;">
+                <label for="macro-name-input" style="font-size: 12px; color: var(--text-secondary); font-weight: 500;">Name:</label>
+                <input id="macro-name-input" class="form-input inline" type="text" maxlength="64" aria-label="Local macro name" style="width: 180px; padding: 4px 8px; font-size: 12px;">
+                <label for="macro-playback-type" style="font-size: 12px; color: var(--text-secondary); font-weight: 500;">Playback Mode:</label>
+                <select id="macro-playback-type" class="form-select inline" style="width: auto; padding: 4px 8px; font-size: 12px;">
+                  <option value="0">Repeat While Held (0)</option>
+                  <option value="1">Play Once (1)</option>
+                  <option value="255">Toggle Repeat (255)</option>
+                </select>
+              </div>
+              <p class="subtitle" style="margin-top: 6px; font-size: 12px;">Names and standard-delay settings are stored on this computer. They are not written into keyboard macro flash.</p>
+            </div>
+            <div class="macro-header-btns" data-skip-macro-record>
+              <button class="action-btn" id="btn-assign-macro" data-action="assign-macro-to-key" title="Assign active macro slot to the selected key in Keymap">Assign to Selected Key</button>
+              <button class="action-btn warning-subtle" id="btn-record-macro" data-action="toggle-macro-recording">Record</button>
+              <span id="macro-recording-badge" class="badge badge-danger" hidden>Recording…</span>
+              <button class="action-btn danger-subtle" data-action="clear-macro-slot">Reset</button>
+            </div>
+          </div>
+
+          <div class="macro-record-options" data-skip-macro-record>
+            <label class="macro-std-delay-label" for="macro-standard-delay">
+              <input id="macro-standard-delay" type="checkbox">
+              Standard delay
+            </label>
+            <input id="macro-standard-delay-ms" class="form-input inline" type="number" min="5" max="65535" value="50" aria-label="Standard delay in milliseconds">
+            <span class="macro-std-delay-unit">ms</span>
+            <span class="macro-record-hint">After Record, type and click in the capture box. Pause keeps this slot.</span>
+          </div>
+
+          <div id="macro-capture-surface" class="macro-capture" tabindex="0" hidden role="application" aria-label="Macro recording capture area">
+            Recording — type keys or click mouse buttons here. Editor controls are not recorded.
+          </div>
+
+          <div class="macro-edit-toolbar" data-skip-macro-record>
+            <button class="action-btn" data-action="copy-macro-actions">Copy</button>
+            <button class="action-btn" data-action="paste-macro-actions">Paste</button>
+            <button class="action-btn" data-action="insert-macro-action">Insert</button>
+            <button class="action-btn" data-action="replace-macro-action" title="Replace selected action with chosen key or mouse button">Replace Selected</button>
+            <button class="action-btn" data-action="move-macro-action-up" title="Move selected action earlier">Up</button>
+            <button class="action-btn" data-action="move-macro-action-down" title="Move selected action later">Down</button>
+            <button class="action-btn" data-action="edit-macro-action-kind">Toggle Down/Up</button>
+            <button class="action-btn danger-subtle" data-action="remove-macro-action">Delete</button>
+          </div>
+
+          <!-- Actions Table -->
+          <div class="macro-actions-table-wrapper">
+            <table class="macro-table">
+              <thead>
+                <tr>
+                  <th style="width: 50px;">#</th>
+                  <th>Action Type</th>
+                  <th>Key / Button</th>
+                  <th style="width: 130px;">Delay (ms)</th>
+                </tr>
+              </thead>
+              <tbody id="macro-actions-tbody">
+                <!-- Action rows -->
+              </tbody>
+            </table>
+            <div id="macro-empty-state" class="empty-state-inner" hidden>
+              <span>Empty macro slot. Click Record or add actions after reading from the keyboard.</span>
+            </div>
+          </div>
+
+          <!-- Add Action Bar -->
+          <div class="macro-add-bar" data-skip-macro-record>
+            <div class="add-action-controls">
+              <select id="macro-new-type" class="form-select inline">
+                <option value="keydown">Key Down</option>
+                <option value="keyup">Key Up</option>
+                <option value="keypress">Key Press (Down+Up)</option>
+                <option value="mousedown">Mouse Down</option>
+                <option value="mouseup">Mouse Up</option>
+              </select>
+              <select id="macro-new-key" class="form-select inline">
+                <!-- Key options -->
+              </select>
+              <input type="number" id="macro-new-delay" class="form-input inline" value="20" min="5" max="65535" placeholder="ms">
+              <button class="action-btn primary" data-action="add-macro-action">+ Add Action</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 5: SETTINGS — G75 mechanical iG et: left rate+sleep, right Win lock+Mac+combo -->
+    <section id="panel-settings" class="view-panel" hidden>
+      <div class="panel-header">
+        <div>
+          <span class="eyebrow">DEVICE PERFORMANCE</span>
+          <h1>Keyboard Settings</h1>
+          <p class="subtitle">Polling rate, sleep, Win lock, Mac mode, and key combo. Each control saves on its own.</p>
+        </div>
+        <div class="panel-header-actions">
+          <p class="lighting-save-status" id="settings-save-status" role="status" aria-live="polite"></p>
+          <button type="button" class="action-btn" id="btn-retry-settings-save" data-action="retry-settings-save" hidden>Retry</button>
+          <button class="action-btn" data-action="read-settings">Read from Device</button>
+          <button class="action-btn primary" id="btn-apply-settings" data-action="apply-settings" hidden disabled>Apply Settings to Device</button>
+        </div>
+      </div>
+
+      <div class="settings-cards-grid">
+        <div class="settings-col" data-settings-col="left">
+          <div class="dash-card" data-performance-card="rate">
+            <div class="dash-card-header">
+              <span class="card-icon"><svg class="line-icon"><use href="#i-sliders"/></svg></span>
+              <h2>Polling Rate</h2>
+            </div>
+            <fieldset id="setting-polling-rate" class="rate-radios">
+              <legend class="sr-only">Polling rate</legend>
+              <label class="rate-radio">
+                <input type="radio" name="setting-polling-rate" value="4">
+                <span>1 kHz</span>
+              </label>
+              <label class="rate-radio">
+                <input type="radio" name="setting-polling-rate" value="3">
+                <span>2 kHz</span>
+              </label>
+              <label class="rate-radio">
+                <input type="radio" name="setting-polling-rate" value="2">
+                <span>4 kHz</span>
+              </label>
+              <label class="rate-radio">
+                <input type="radio" name="setting-polling-rate" value="1">
+                <span>8 kHz</span>
+              </label>
+            </fieldset>
+            <p class="field-hint" id="setting-polling-rate-hint">Higher keyboard polling rate reduces input delay.</p>
+          </div>
+
+          <div class="dash-card" data-performance-card="sleep">
+            <div class="dash-card-header">
+              <span class="card-icon"><svg class="line-icon"><use href="#i-sliders"/></svg></span>
+              <h2>Sleep</h2>
+            </div>
+            <div class="form-group">
+              <div class="label-with-value">
+                <label for="setting-sleep-time">Sleep Setting (Minutes)</label>
+                <span id="setting-sleep-time-val" class="slider-val">3 min</span>
+              </div>
+              <input type="range" id="setting-sleep-time" min="1" max="30" step="1" value="3" class="form-range">
+              <div class="checkbox-row" style="margin-top: 10px;">
+                <label class="checkbox-container" id="setting-never-sleep-container">
+                  <input type="checkbox" id="setting-never-sleep">
+                  <span class="checkmark"></span>
+                  <span class="checkbox-label">Never Sleep</span>
+                </label>
+                <p class="field-hint">In 2.4G and wireless modes, the device will automatically enter sleep mode after a specified idle time.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-col" data-settings-col="right">
+          <div class="dash-card" data-performance-card="lockWin">
+            <div class="dash-card-header">
+              <span class="card-icon"><svg class="line-icon"><use href="#i-sliders"/></svg></span>
+              <h2>Win Key Lock</h2>
+            </div>
+            <div class="form-group checkbox-row">
+              <label class="checkbox-container" id="setting-lock-win-container">
+                <input type="checkbox" id="setting-lock-win">
+                <span class="checkmark"></span>
+                <span class="checkbox-label">Win Key Lock</span>
+              </label>
+              <p class="field-hint" id="setting-lock-win-hint">After turning it on, the Win key will be locked and cannot be used to prevent accidental touches during the game.</p>
+            </div>
+          </div>
+
+          <div class="dash-card" data-performance-card="macMode">
+            <div class="dash-card-header">
+              <span class="card-icon"><svg class="line-icon"><use href="#i-sliders"/></svg></span>
+              <h2>Mac Mode</h2>
+            </div>
+            <div class="form-group">
+              <label>Switch to Mac mode</label>
+              <div class="button-toggle-group">
+                <button id="btn-mode-win" class="toggle-btn" data-action="set-os-mode" data-mode="win">Windows Mode</button>
+                <button id="btn-mode-mac" class="toggle-btn active" data-action="set-os-mode" data-mode="mac">macOS Mode</button>
+              </div>
+              <p class="field-hint">After switching to Mac mode, the default layer will be switched to MacOS.</p>
+            </div>
+          </div>
+
+          <div class="dash-card" data-performance-card="combo">
+            <div class="dash-card-header">
+              <span class="card-icon"><svg class="line-icon"><use href="#i-sliders"/></svg></span>
+              <h2>Key Combo</h2>
+            </div>
+            <div class="form-group checkbox-row">
+              <label class="checkbox-container" id="setting-key-combo-container">
+                <input type="checkbox" id="setting-key-combo">
+                <span class="checkmark"></span>
+                <span class="checkbox-label">Key Combo Mode</span>
+              </label>
+              <p class="field-hint">Reduces repeated triggers caused by key bounce.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="capability-notice">
+        <span class="notice-icon"><svg class="line-icon"><use href="#i-info"/></svg></span>
+        <p><strong>Knob wheel:</strong> Wheel mode is not edited here and is left unchanged. The knob press can still be remapped under Key settings.</p>
+      </div>
+
+      <div class="capability-notice alert-subtle">
+        <span class="notice-icon"><svg class="line-icon"><use href="#i-info"/></svg></span>
+        <p><strong>Hardware Capability Notice:</strong> Rapid Trigger and analog Hall-effect actuation calibration are disabled because G75 V2 is a mechanical switch keyboard. Only genuine mechanical features are exposed.</p>
+      </div>
+    </section>
+
+    <!-- TAB 6: BACKUP & PROFILES -->
+    <section id="panel-profiles" class="view-panel" hidden>
+      <div class="panel-header">
+        <div>
+          <span class="eyebrow">DATA MANAGEMENT</span>
+          <h1>Backup, Import & Export</h1>
+          <p class="subtitle">Save full keyboard profiles to local JSON files. Transfer keymaps, lighting presets, macros, and settings offline.</p>
+        </div>
+      </div>
+
+      <div class="backup-grid">
+        <div class="dash-card">
+          <div class="dash-card-header">
+            <span class="card-icon"><svg class="line-icon"><use href="#i-box"/></svg></span>
+            <h2>Export Profile</h2>
+          </div>
+          <p class="card-desc">Exports the <strong>edit-target</strong> profile: 4 layers, lighting (including calibration RGB), settings, macros, and advanced MT/TGL/extras hex. Does not activate that profile.</p>
+          <button class="action-btn primary large" data-action="export-profile">Export Edit-Target Profile (JSON)…</button>
+        </div>
+
+        <div class="dash-card">
+          <div class="dash-card-header">
+            <span class="card-icon"><svg class="line-icon"><use href="#i-box"/></svg></span>
+            <h2>Import Profile</h2>
+          </div>
+          <p class="card-desc">Load a JSON profile, preview, then Apply. This is not atomic — a later section can fail after earlier sections have already been written.</p>
+          <button class="action-btn large" data-action="import-profile">Import Profile from File…</button>
+        </div>
+      </div>
+
+      <div class="profile-preview-card" id="imported-profile-preview" hidden>
+        <h3>Imported Profile Details</h3>
+        <pre id="imported-profile-json" class="json-preview font-mono"></pre>
+        <p id="import-target-note" class="field-hint">Will apply to the current edit-target profile, not necessarily the hardware-active profile.</p>
+        <p id="import-partial-error" class="field-hint" hidden></p>
+        <button class="action-btn primary" data-action="apply-imported-profile">Apply Imported Profile to Edit Target</button>
+      </div>
+    </section>
+
+    <!-- TAB 7: OTHERS (firmware honesty + factory reset) -->
+    <section id="panel-others" class="view-panel" hidden>
+      <div class="panel-header">
+        <div>
+          <span class="eyebrow">DEVICE MAINTENANCE</span>
+          <h1>Others</h1>
+          <p class="subtitle">Factory reset for the hardware-active profile or every onboard profile. Firmware update reviews a user-chosen official package; physical flash remains unproven.</p>
+        </div>
+      </div>
+
+      <div class="backup-grid">
+        <div class="dash-card">
+          <div class="dash-card-header">
+            <span class="card-icon"><svg class="line-icon"><use href="#i-info"/></svg></span>
+            <h2>Firmware update</h2>
+          </div>
+          <p class="card-desc">Upgrade the keyboard only over USB, or the 2.4G receiver only while the dongle is connected. Choose a local official package; this app never downloads firmware. Review size, SHA-256, and boot identity, then confirm. Physical flash is unproven.</p>
+          <div class="stats-list" style="margin-top: 12px;">
+            <div class="stat-row">
+              <span class="stat-label">Keyboard MCU</span>
+              <span id="firmware-mcu-version" class="stat-value font-mono">--</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Receiver RF</span>
+              <span id="firmware-rf-version" class="stat-value font-mono">--</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Update target</span>
+              <span id="firmware-target-label" class="stat-value">--</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Package file</span>
+              <span id="firmware-package-name" class="stat-value">None selected</span>
+            </div>
+          </div>
+          <p id="firmware-mode-rule" class="field-hint"></p>
+          <p id="firmware-status" class="field-hint"></p>
+          <p id="firmware-progress" class="field-hint" hidden></p>
+          <div class="panel-header-actions" style="margin-top: 12px;">
+            <button class="action-btn" data-action="firmware-choose-package" id="btn-firmware-choose">Choose official package…</button>
+            <button class="action-btn primary" data-action="firmware-review" id="btn-firmware-review">Review update…</button>
+          </div>
+        </div>
+
+        <div class="dash-card">
+          <div class="dash-card-header">
+            <span class="card-icon"><svg class="line-icon"><use href="#i-tool"/></svg></span>
+            <h2>Factory reset</h2>
+          </div>
+          <p class="card-desc"><strong>Reset active profile</strong> restores the profile currently active on the keyboard. That can differ from the profile you are editing. <strong>Reset all profiles</strong> restores every onboard profile.</p>
+          <p class="field-hint">Local drafts are discarded. Export saves one profile per file, not the whole keyboard. Saved macro names on this computer are shared: they are cleared only after a confirmed reset of every profile. Resetting only the active profile leaves those names in this app.</p>
+          <div class="panel-header-actions" style="margin-top: 12px;">
+            <button class="action-btn warning-subtle" data-action="reset-active" id="btn-reset-active">Reset active profile…</button>
+            <button class="action-btn danger-subtle" data-action="reset-all" id="btn-reset-all">Reset all profiles…</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 8: CAPABILITY MATRIX & GUIDE -->
+    <section id="panel-guide" class="view-panel" hidden>
+      <div class="panel-header">
+        <div>
+          <span class="eyebrow">DOCUMENTATION & TRANSPARENCY</span>
+          <h1>Capability Matrix & Offline Architecture</h1>
+          <p class="subtitle">Verified hardware capabilities vs vendor protocol boundaries for MCHOSE G75 V2 on macOS.</p>
+        </div>
+      </div>
+
+      <div class="guide-content">
+        <!-- Capability Matrix Table -->
+        <div class="dash-card full-width">
+          <h2>Hardware Capability Matrix (MCHOSE G75 V2 2.4G Receiver)</h2>
+          <table class="matrix-table">
+            <thead>
+              <tr>
+                <th>Feature Category</th>
+                <th>Status</th>
+                <th>Protocol Mechanism</th>
+                <th>Evidence & Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Hardware Detection</strong></td>
+                <td><span class="badge badge-success">Verified Working</span></td>
+                <td>macOS IOKit & node-hid enumeration</td>
+                <td>Receiver VID 0x3837 PID 0x3033 interface 1 usagePage 1 matched.</td>
+              </tr>
+              <tr>
+                <td><strong>Nonexclusive Mode</strong></td>
+                <td><span class="badge badge-success">Verified Working</span></td>
+                <td>node-hid nonExclusive: true</td>
+                <td>Normal typing on Mac continues uninterrupted while configurator is open.</td>
+              </tr>
+              <tr>
+                <td><strong>Device Telemetry</strong></td>
+                <td><span class="badge badge-success">Verified Working</span></td>
+                <td>CMD 3 (getInfo), CMD 4 (getBase), CMD 5 (getFuncConfig)</td>
+                <td>Reads MCU FW 1.14, RF FW 1.30, 2.4G Dongle string, battery level and charging state.</td>
+              </tr>
+              <tr>
+                <td><strong>Onboard Profiles</strong></td>
+                <td><span class="badge badge-subtle">Read verified / writes mock-tested</span></td>
+                <td>CMD 4 (getBase) / CMD 14 (setBase)</td>
+                <td>Reads verified on hardware. Activate / switch / enable writes are mock-tested only; live device writes have not been validated.</td>
+              </tr>
+              <tr>
+                <td><strong>4 Key Remap Layers</strong></td>
+                <td><span class="badge badge-subtle">Read verified / writes mock-tested</span></td>
+                <td>CMD 7 (default) / CMD 8 (user) / CMD 9 (setUserKey)</td>
+                <td>Layers 0..3 (Win, WinFn, Mac, MacFn). Layer reads verified. Apply writes are mock-tested only.</td>
+              </tr>
+              <tr>
+                <td><strong>23 RGB Lighting Effects</strong></td>
+                <td><span class="badge badge-subtle">Read verified / writes mock-tested</span></td>
+                <td>CMD 5 (read) / CMD 6 (write 64B segmented)</td>
+                <td>Backlight effects 0..22, brightness 0..100, speed 0..4, direction, 24-bit RGB hex colors. Reads verified. Apply writes are mock-tested only.</td>
+              </tr>
+              <tr>
+                <td><strong>Side Light Indicator</strong></td>
+                <td><span class="badge badge-subtle">Read verified / writes mock-tested</span></td>
+                <td>CMD 5 / CMD 6 (bytes 24..31)</td>
+                <td>Neon (1), Constant (2), Breathing (3), Off (4), brightness, speed, RGB. Reads verified. Apply writes are mock-tested only.</td>
+              </tr>
+              <tr>
+                <td><strong>16 Hardware Macro Slots</strong></td>
+                <td><span class="badge badge-subtle">Read verified / writes mock-tested</span></td>
+                <td>CMD 12 (read) / CMD 13 (write)</td>
+                <td>Shared 8192-byte flash space. Reads verified. Upload writes are mock-tested only.</td>
+              </tr>
+              <tr>
+                <td><strong>Performance & Sleep</strong></td>
+                <td><span class="badge badge-subtle">Read verified / writes mock-tested</span></td>
+                <td>CMD 5 / CMD 6 (byte 4 rate, byte 7 debounce, byte 35 sleepTime, byte 36 sleepMode, byte 6 bit0 Winlock, byte 1 OS nibble)</td>
+                <td>Sleep is units of 30s at byte 35 and is displayed as-read (not rounded on sight). Never Sleep keeps the slider enabled; releasing the slider writes sleepMode 0. OS mode is byte 1 low nibble. Each control saves automatically. Reads verified. Writes are mock-tested only.</td>
+              </tr>
+              <tr>
+                <td><strong>Profile Import / Export</strong></td>
+                <td><span class="badge badge-subtle">Writes mock-tested</span></td>
+                <td>Local JSON file dialogs</td>
+                <td>Export is local. Apply to device is mock-tested only and not atomic: a later section can fail after earlier writes.</td>
+              </tr>
+              <tr>
+                <td><strong>Rapid Trigger / Hall-Effect</strong></td>
+                <td><span class="badge badge-unsupported">Intentionally Disabled</span></td>
+                <td>N/A (Hardware not applicable)</td>
+                <td>G75 V2 uses mechanical switches. Analog magnetic actuation controls are omitted.</td>
+              </tr>
+              <tr>
+                <td><strong>MT / TGL / SOCD</strong></td>
+                <td><span class="badge badge-success">Mock-validated</span></td>
+                <td>CMD 164–167 tables, 160/161 extras</td>
+                <td>Mechanical G75 V2 only. RS/LT/DKS magnetic features are not exposed.</td>
+              </tr>
+              <tr>
+                <td><strong>Firmware Flashing</strong></td>
+                <td><span class="badge badge-subtle">User-operable in-app / physical flash unproven</span></td>
+                <td>Traced flag-response updater (enter-boot, erase, 32-byte write/check, end, success)</td>
+                <td>Others tab. Keyboard upgrade is wired-only; receiver upgrade is 2.4G-only. A user-chosen file must match the official catalog size and SHA-256. Review, then explicit confirm. Sequence: backup → boot → erase → send → verify → same-device return → version readback → restore. Uncertain erase is not retried. Package is not downloaded (<code>connect-src 'none'</code>). Physical boot descriptors and live flash remain unverified.</td>
+              </tr>
+              <tr>
+                <td><strong>Factory Reset</strong></td>
+                <td><span class="badge badge-subtle">Writes mock-tested</span></td>
+                <td>CMD 238 offset 0, data [activeIndex] or [255]</td>
+                <td>Others tab. Active target is the keyboard’s current profile, not the edit target. Completion is confirmed only when the keyboard reports the reset; otherwise the result is uncertain. No automatic retry. Physical reset has not been tested.</td>
+              </tr>
+              <tr>
+                <td><strong>Cloud Sync / Accounts</strong></td>
+                <td><span class="badge badge-unsupported">Intentionally Excluded</span></td>
+                <td>No external network calls</td>
+                <td>Offline privacy guarantee. App operates 100% locally with zero internet requests.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Architecture Callout -->
+        <div class="dash-card full-width">
+          <h2>100% Offline Architecture</h2>
+          <p>Unlike the vendor web configurator which requires online cloud bundles, telemetry, and WebHID browser tabs, Maicong Studio is built from the ground up as a native macOS utility:</p>
+          <ul class="guide-bullets">
+            <li><strong>Zero Remote Network Requests:</strong> Content Security Policy strictly enforces <code>connect-src 'none'</code>. No analytics, tracking, or remote JS.</li>
+            <li><strong>Pure Native Node-HID:</strong> Direct connection to macOS IOKit USB HID endpoints via <code>node-hid</code>.</li>
+            <li><strong>Serialized I/O & Nonexclusive Safety:</strong> All packets are single-flight sequenced with timeouts. Normal typing is never locked out.</li>
+            <li><strong>Writes:</strong> Lighting and Key Config onboard edits save automatically. Custom profile preview stays on this Mac (zero HID). Activate, profile enable, and factory reset still require an explicit click. Live device writes have been mock-tested only. Physical factory reset has not been tested.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+      </main>
+    </section>
+  </div>
+
+  <div id="firmware-review-dialog" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="firmware-review-title" aria-describedby="firmware-review-body" hidden>
+    <div class="modal-card" role="document">
+      <h2 id="firmware-review-title">Review firmware update</h2>
+      <p id="firmware-review-body" class="card-desc">Review the connected device, catalog package, and boot identity before flashing.</p>
+      <p id="firmware-review-hash" class="field-hint font-mono"></p>
+      <p id="firmware-review-size" class="field-hint"></p>
+      <p id="firmware-review-boot" class="field-hint font-mono"></p>
+      <p id="firmware-review-mode-rule" class="field-hint"></p>
+      <p class="field-hint">This will back up the keyboard, reboot it into the updater, erase, write, and verify the package, then restore the backup. Physical flashing is unproven. Cancel leaves the keyboard unchanged.</p>
+      <div class="modal-actions">
+        <button type="button" class="action-btn" id="btn-firmware-cancel" data-action="firmware-dialog-cancel">Cancel</button>
+        <button type="button" class="action-btn danger-subtle" id="btn-firmware-confirm" data-action="firmware-dialog-confirm">Update firmware</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="reset-confirm-dialog" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="reset-dialog-title" aria-describedby="reset-dialog-body" hidden>
+    <div class="modal-card" role="document">
+      <h2 id="reset-dialog-title">Confirm factory reset</h2>
+      <p id="reset-dialog-body" class="card-desc">Review the hardware-active target before continuing.</p>
+      <p id="reset-dialog-export-note" class="field-hint">A single profile export is not a full-device backup.</p>
+      <div class="modal-actions">
+        <button type="button" class="action-btn" id="btn-reset-export" data-action="reset-dialog-export">Export this profile first…</button>
+        <button type="button" class="action-btn" id="btn-reset-cancel" data-action="reset-dialog-cancel">Cancel</button>
+        <button type="button" class="action-btn danger-subtle" id="btn-reset-confirm" data-action="reset-dialog-confirm">Reset</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="app-bind-delete-dialog" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="app-bind-delete-title" aria-describedby="app-bind-delete-body" hidden>
+    <div class="modal-card" role="document">
+      <h2 id="app-bind-delete-title">Delete linked profile</h2>
+      <p id="app-bind-delete-body" class="card-desc">This onboard profile is linked to a game/app. Deleting it will also remove the link. Delete?</p>
+      <div class="modal-actions">
+        <button type="button" class="action-btn" id="btn-app-bind-delete-cancel" data-action="app-bind-delete-cancel">Cancel</button>
+        <button type="button" class="action-btn danger-subtle" id="btn-app-bind-delete-confirm" data-action="app-bind-delete-confirm">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="profile-name-dialog" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="profile-name-title" hidden>
+    <div class="modal-card" role="document">
+      <h2 id="profile-name-title">Create configuration</h2>
+      <p class="field-hint" id="profile-name-hint">The configuration name should be between 2 and 15 characters.</p>
+      <div class="form-group">
+        <label for="profile-name-input">Configuration name</label>
+        <input id="profile-name-input" class="form-input" type="text" maxlength="15" autocomplete="off">
+      </div>
+      <p class="field-hint" id="profile-name-error" hidden></p>
+      <div class="modal-actions">
+        <button type="button" class="action-btn" id="btn-profile-name-cancel" data-action="profile-name-cancel">Cancel</button>
+        <button type="button" class="action-btn primary" id="btn-profile-name-confirm" data-action="profile-name-confirm">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="still-name-dialog" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="still-name-title" hidden>
+    <div class="modal-card" role="document">
+      <h2 id="still-name-title">Add Static</h2>
+      <p class="field-hint" id="still-name-hint">Lighting name must be 2–15 characters.</p>
+      <div class="form-group">
+        <label for="still-name-input">Effect name</label>
+        <input id="still-name-input" class="form-input" type="text" maxlength="15" autocomplete="off">
+      </div>
+      <p class="field-hint" id="still-name-error" hidden></p>
+      <div class="modal-actions">
+        <button type="button" class="action-btn" id="btn-still-name-cancel" data-action="still-name-cancel">Cancel</button>
+        <button type="button" class="action-btn primary" id="btn-still-name-confirm" data-action="still-name-confirm">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="gif-name-dialog" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="gif-name-title" hidden>
+    <div class="modal-card" role="document">
+      <h2 id="gif-name-title">Rename GIF</h2>
+      <p class="field-hint" id="gif-name-hint">Animation name must be 2–15 characters.</p>
+      <div class="form-group">
+        <label for="gif-name-input">Animation name</label>
+        <input id="gif-name-input" class="form-input" type="text" maxlength="15" autocomplete="off">
+      </div>
+      <p class="field-hint" id="gif-name-error" hidden></p>
+      <div class="modal-actions">
+        <button type="button" class="action-btn" id="btn-gif-name-cancel" data-action="gif-name-cancel">Cancel</button>
+        <button type="button" class="action-btn primary" id="btn-gif-name-confirm" data-action="gif-name-confirm">Rename</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="gif-editor-dialog" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="gif-editor-title" hidden>
+    <div class="modal-card gif-editor-card" role="document">
+      <div class="gif-editor-header">
+        <h2 id="gif-editor-title">Edit GIF Animation</h2>
+        <span id="gif-editor-status" class="field-hint"></span>
+      </div>
+      <div class="form-group">
+        <label for="gif-edit-name">Animation name</label>
+        <input id="gif-edit-name" class="form-input" type="text" maxlength="15" autocomplete="off">
+      </div>
+      <div class="gif-timeline-toolbar">
+        <button type="button" class="action-btn" id="btn-gif-prev-frame" data-action="gif-prev-frame">&lt; Prev</button>
+        <span id="gif-frame-info" class="field-hint">Frame 1 / 1</span>
+        <button type="button" class="action-btn" id="btn-gif-next-frame" data-action="gif-next-frame">Next &gt;</button>
+        <button type="button" class="action-btn" id="btn-gif-add-frame" data-action="gif-add-frame">+ Add Frame</button>
+        <button type="button" class="action-btn danger-subtle" id="btn-gif-del-frame" data-action="gif-del-frame">Delete Frame</button>
+        <div class="gif-frame-duration-group">
+          <label for="gif-frame-duration">Duration (ms):</label>
+          <input type="number" id="gif-frame-duration" min="30" max="2000" step="10" value="100" class="form-input duration-input">
+        </div>
+        <button type="button" class="action-btn" id="btn-gif-preview-toggle" data-action="gif-preview-toggle">Preview</button>
+      </div>
+      <div class="gif-editor-canvas-wrap">
+        <div id="gif-editor-key-grid" class="gif-key-grid" aria-label="Key lighting grid"></div>
+      </div>
+      <div class="gif-editor-paint-toolbar">
+        <label for="gif-paint-color">Paint Color:</label>
+        <input type="color" id="gif-paint-color" value="#00e5ff" class="color-picker-input">
+        <button type="button" class="action-btn" id="btn-gif-fill-all" data-action="gif-fill-all">Fill All Keys</button>
+        <button type="button" class="action-btn" id="btn-gif-clear-all" data-action="gif-clear-all">Clear (Black)</button>
+      </div>
+      <p class="field-hint" id="gif-editor-error" hidden></p>
+      <div class="modal-actions">
+        <button type="button" class="action-btn" id="btn-gif-editor-cancel" data-action="gif-editor-cancel">Cancel</button>
+        <button type="button" class="action-btn primary" id="btn-gif-editor-save" data-action="gif-editor-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="keymap-reset-dialog" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="keymap-reset-title" aria-describedby="keymap-reset-body" hidden>
+    <div class="modal-card" role="document">
+      <h2 id="keymap-reset-title">Prompt</h2>
+      <p id="keymap-reset-body" class="card-desc">This operation will clear all the key input contents. Do you want to continue?</p>
+      <div class="modal-actions">
+        <button type="button" class="action-btn" id="btn-keymap-reset-cancel" data-action="keymap-reset-cancel">Cancel</button>
+        <button type="button" class="action-btn danger-subtle" id="btn-keymap-reset-confirm" data-action="keymap-reset-confirm">restore</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="advanced-clear-dialog" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="advanced-clear-title" aria-describedby="advanced-clear-body" hidden>
+    <div class="modal-card" role="document">
+      <h2 id="advanced-clear-title">Prompt</h2>
+      <p id="advanced-clear-body" class="card-desc">This operation will clear all the contents of the advanced keys. Do you want to continue?</p>
+      <div class="modal-actions">
+        <button type="button" class="action-btn" id="btn-advanced-clear-cancel" data-action="advanced-clear-cancel">Cancel</button>
+        <button type="button" class="action-btn danger-subtle" id="btn-advanced-clear-confirm" data-action="advanced-clear-confirm">Clear</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="macro-draft.js"></script>
+  <script src="lighting-autosave.cjs"></script>
+  <script src="performance-autosave.cjs"></script>
+  <script src="key-config.cjs"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

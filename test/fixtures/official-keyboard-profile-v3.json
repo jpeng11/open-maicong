@@ -1,0 +1,82 @@
+{
+  "dataScope": "KeyboardProfile",
+  "type": "localstorage",
+  "version": 3,
+  "vendorId": 14391,
+  "productId": 8225,
+  "productName": "MCHOSE G75 V2",
+  "identity": {
+    "vendorId": 14391,
+    "productId": 8225,
+    "productName": "MCHOSE G75 V2"
+  },
+  "exportedAt": 1700000000000,
+  "data": {
+    "name": "Office",
+    "performance": {
+      "macMode": 0,
+      "sleepTime": 6,
+      "sleepMode": 0,
+      "debounceLevel": 0,
+      "lockWin": false,
+      "reporteRate": 4,
+      "debugMode": 0,
+      "rf_battery": 0,
+      "isCharging": 0,
+      "work_mode": 0,
+      "report_rate_2_4G": 0,
+      "tickRate": 0
+    },
+    "light": {
+      "config": {
+        "effect": 3,
+        "brightness": 80,
+        "speed": 2,
+        "direct": 0,
+        "customColorDisabled": 0,
+        "hexColor": "#112233",
+        "side_effect": 1,
+        "side_brightness": 40,
+        "side_speed": 1,
+        "sideCustomColorDisabled": 0,
+        "side_hexColor": "#445566"
+      },
+      "colors": []
+    },
+    "userKeys": [
+      {
+        "type": "diff-keys",
+        "dataV2": {
+          "0x100004": [
+            { "type": 16, "code1": 0, "code2": 5 }
+          ],
+          "fn-key": [
+            { "type": 240, "code1": 255, "code2": 1 }
+          ]
+        }
+      },
+      { "type": "diff-keys", "dataV2": {} },
+      { "type": "diff-keys", "dataV2": {} },
+      { "type": "diff-keys", "dataV2": {} }
+    ],
+    "triggerTravel": { "travelKeys": [] },
+    "customParam": {},
+    "lightValueStore": { "light": [], "sideLight": [], "sideLight2": [] },
+    "selectedLightEffect": ["still", ""],
+    "advancedKeys": { "dks": [], "mt": [], "tgl": [] }
+  },
+  "macros": [
+    {
+      "macroIndex": 0,
+      "name": "Alpha",
+      "type": 0,
+      "defaultDelay": 50,
+      "enableDefaultDelay": true,
+      "macroActions": [
+        { "type": "action", "action": "keydown", "code": 4 },
+        { "type": "time", "delay": 10 },
+        { "type": "action", "action": "keyup", "code": 4 }
+      ]
+    }
+  ]
+}

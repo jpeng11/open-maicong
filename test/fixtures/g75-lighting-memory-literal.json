@@ -1,0 +1,33 @@
+{
+  "source": "Independent constructed bytes from root lighting-memory review; not copied from runtime serialize output",
+  "marker": [60, 108, 105, 103, 104, 116, 64, 118, 50, 62],
+  "markerText": "<light@v2>",
+  "countOffsets": [10, 11, 12],
+  "recordsOffset": 13,
+  "fillByte": 165,
+  "ordinaryPrefix": [60, 108, 105, 103, 104, 116, 64, 118, 50, 62, 1, 1, 0, 6, 18, 52, 86, 67, 75, 3, 171, 205, 239, 32, 80],
+  "ordinaryExpected": {
+    "main": [{
+      "effect": 6,
+      "hexColor": "#123456",
+      "speed": 4,
+      "direction": 1,
+      "customColorDisabled": true,
+      "brightness": 75,
+      "flags": 67
+    }],
+    "side": [{
+      "sideEffect": 3,
+      "sideHexColor": "#ABCDEF",
+      "sideSpeed": 2,
+      "sideCustomColorDisabled": false,
+      "sideBrightness": 80,
+      "flags": 32
+    }]
+  },
+  "unknownMainFlagsOffset": 17,
+  "unknownMainFlags": 79,
+  "unknownSideFlagsOffset": 23,
+  "unknownSideFlags": 46,
+  "side2Record": [99, 1, 2, 3, 46, 60]
+}

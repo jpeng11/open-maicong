@@ -1,0 +1,1396 @@
+const { app, BrowserWindow, ipcMain, Menu, dialog, shell } = require('electron');
+const path = require('node:path');
+const fs = require('node:fs');
+const transport = require('./transport.cjs');
+const detector = require('./detector.cjs');
+const validators = require('./schema-validators.cjs');
+const macroMetadata = require('./macro-metadata.cjs');
+const {
+  G75_V2_KEYS,
+  G75_V2_LIGHTING_ENTRIES,
+  SPACE_LIGHTING_ZONES,
+  REMAP_CATEGORIES,
+  getRemapCategories,
+  LIGHT_EFFECTS,
+  SIDE_LIGHT_EFFECTS,
+  LIGHT_EFFECT_DISPLAY_ORDER,
+  LIGHT_EFFECT_PRESET_ORDER,
+  SIDE_LIGHT_DISPLAY_ORDER,
+  LIGHT_DIRECTION_PAIRS,
+  VALID_PHYSICAL_SLOTS,
+  ELIGIBLE_ADVANCED_SLOTS,
+  SOCD_PRIORITIES,
+  getDefaultTuple,
+  getDefaultLayersData
+} = require('./layout-g75v2.cjs');
+const advancedPlan = require('./advanced-plan.cjs');
+const { FirmwareSession } = require('./firmware-session.cjs');
+const { AppBindWatcher } = require('./profile-app-bind-watch.cjs');
+
+let win = null;
+let deviceWatcher = null;
+let firmwareSession = null;
+let appBindWatcher = null;
+
+const smoke = process.argv.includes('--smoke-test');
+const mockUiTest = process.argv.includes('--mock-ui-test');
+const isDevHarness = (smoke || mockUiTest) && !app.isPackaged;
+if (smoke || mockUiTest) {
+  app.setPath('userData', path.join(app.getPath('temp'), `maicong-harness-${process.pid}`));
+}
+
+function getCompleteState() {
+  const tState = transport.lastState;
+  return {
+    connected: tState.connected,
+    device: tState.device,
+    info: tState.info,
+    base: tState.base,
+    battery: tState.battery,
+    firmware: tState.info ? tState.info.firmwareVersion : 'Unknown',
+    rfFirmware: tState.info ? tState.info.rfFirmwareVersion : 'Unknown',
+    buildDate: tState.info ? tState.info.buildDate : '',
+    dongleInfo: tState.info ? tState.info.dongleInfo : '',
+    activeProfileIndex: tState.activeProfileIndex,
+    isStandby: transport.isStandby,
+    needsReconnect: transport.needsReconnect,
+    statusError: tState.statusError || null,
+    readSuccess: tState.readSuccess !== false,
+    lighting: tState.lighting,
+    settings: tState.settings,
+    keymaps: tState.keymaps,
+    keyColors: tState.keyColors,
+    macros: tState.macros,
+    editTarget: transport.editTarget ? { ...transport.editTarget } : { profileIndex: 0, layer: null },
+    resetEpoch: transport.resetEpoch,
+    configUncertain: Boolean(transport.configUncertain),
+    lastResetOutcome: transport.lastResetOutcome,
+    resetInFlight: Boolean(transport.resetInFlight),
+    selectedLightEffect: tState.selectedLightEffect || ['still', ''],
+    stillLibrary: tState.stillLibrary || null,
+    gifLibrary: tState.gifLibrary || null,
+    isStreaming: Boolean(tState.isStreaming),
+    profileLibrary: tState.profileLibrary || null,
+    profileNames: tState.profileNames || null,
+    profileNamesSource: tState.profileNamesSource || 'default',
+    editSource: tState.editSource || { kind: 'onboard', profileIndex: tState.activeProfileIndex || 0 },
+    appBinds: Array.isArray(tState.appBinds) ? tState.appBinds : []
+  };
+}
+
+transport.onStateChange = () => {
+  broadcastState();
+};
+
+transport.onGifFrame = (data) => {
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('maicong:gif-frame', data);
+  }
+};
+
+function broadcastState() {
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('maicong:state-update', getCompleteState());
+  }
+}
+
+function createWindow() {
+  win = new BrowserWindow({
+    title: 'Maicong Studio',
+    width: 1320,
+    height: 900,
+    minWidth: 1080,
+    minHeight: 740,
+    titleBarStyle: 'hiddenInset',
+    backgroundColor: '#e6e7ed',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+
+  win.loadFile(path.join(__dirname, 'index.html'));
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https:') || url.startsWith('http:')) {
+      void shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!url.startsWith('file:')) {
+      event.preventDefault();
+      void shell.openExternal(url);
+    }
+  });
+
+  if (isDevHarness) {
+    win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+      console.log(`[Renderer] [${level}] ${message} (${sourceId}:${line})`);
+    });
+    win.webContents.on('render-process-gone', (_event, details) => {
+      console.error('[Renderer Gone]', details);
+    });
+  }
+
+  win.on('closed', () => {
+    win = null;
+  });
+}
+
+// IPC Handlers with Narrow Input Validation
+ipcMain.handle('maicong:get-state', () => {
+  return getCompleteState();
+});
+
+ipcMain.handle('maicong:get-layout', () => {
+  const defaultLayers = { 0: {}, 1: {}, 2: {}, 3: {} };
+  for (let layer = 0; layer < 4; layer++) {
+    for (const slot of VALID_PHYSICAL_SLOTS) {
+      const tuple = getDefaultTuple(layer, slot);
+      defaultLayers[layer][slot] = { type: tuple[0], code1: tuple[1], code2: tuple[2] };
+    }
+  }
+  return {
+    keys: G75_V2_KEYS,
+    lightingEntries: G75_V2_LIGHTING_ENTRIES,
+    spaceLightingZones: SPACE_LIGHTING_ZONES,
+    remapCategories: REMAP_CATEGORIES,
+    layerRemapCategories: {
+      0: getRemapCategories(0),
+      1: getRemapCategories(1),
+      2: getRemapCategories(2),
+      3: getRemapCategories(3)
+    },
+    lightEffects: LIGHT_EFFECTS,
+    sideLightEffects: SIDE_LIGHT_EFFECTS,
+    lightEffectDisplayOrder: LIGHT_EFFECT_DISPLAY_ORDER,
+    lightEffectPresetOrder: LIGHT_EFFECT_PRESET_ORDER,
+    sideLightDisplayOrder: SIDE_LIGHT_DISPLAY_ORDER,
+    lightDirectionPairs: LIGHT_DIRECTION_PAIRS,
+    socdPriorities: SOCD_PRIORITIES,
+    eligibleAdvancedSlots: Array.from(ELIGIBLE_ADVANCED_SLOTS),
+    defaultLayers
+  };
+});
+
+ipcMain.handle('maicong:scan', async () => {
+  if (mockUiTest && !app.isPackaged) {
+    return { ioregDevices: [], hidDevices: [], state: getCompleteState(), mock: true };
+  }
+  const ioregDevices = await detector.detectDevices();
+  const hidDevices = transport.listDevices();
+
+  if ((!transport.device || transport.needsReconnect) && hidDevices.length > 0) {
+    if (transport.needsReconnect) {
+      transport.disconnect();
+    }
+    const connectRes = transport.connect();
+    if (connectRes.success) {
+      await transport.queryStatus();
+    }
+    broadcastState();
+  }
+
+  return {
+    ioregDevices,
+    hidDevices,
+    state: getCompleteState()
+  };
+});
+
+ipcMain.handle('maicong:connect', async (_event, targetPath) => {
+  if (targetPath && typeof targetPath !== 'string') {
+    return { success: false, error: 'Invalid targetPath' };
+  }
+  const res = transport.connect(targetPath);
+  if (res.success) {
+    await transport.queryStatus();
+  }
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:disconnect', () => {
+  transport.disconnect();
+  broadcastState();
+  return { success: true };
+});
+
+ipcMain.handle('maicong:query-status', async () => {
+  const state = await transport.queryStatus();
+  broadcastState();
+  return state;
+});
+
+ipcMain.handle('maicong:switch-profile', async (_event, profileIndex) => {
+  if (!Number.isInteger(profileIndex) || profileIndex < 0 || profileIndex > 3) {
+    return { success: false, error: 'Invalid profile index (must be 0..3)' };
+  }
+  const res = await transport.switchProfile(profileIndex);
+  if (res.success) {
+    await transport.queryStatus();
+  }
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:read-layer', async (_event, profileIndex, layer, isDefault) => {
+  const p = Number.isInteger(profileIndex) ? profileIndex : 0;
+  const l = Number.isInteger(layer) ? layer : 0;
+  if (p < 0 || p > 3 || l < 0 || l > 3) {
+    return { success: false, error: 'Invalid layer or profile index' };
+  }
+  const res = await transport.readLayer(p, l, Boolean(isDefault));
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:read-key-colors', async (_event, profileIndex) => {
+  const p = Number.isInteger(profileIndex) ? profileIndex : 0;
+  if (p < 0 || p > 3) {
+    return { success: false, error: 'Invalid profile index' };
+  }
+  const res = await transport.readKeyColors(p);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:read-macros', async () => {
+  const res = await transport.readMacros();
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:get-lighting-memory-preference', async () => {
+  const delay = Number(transport.lightMemoryPrefDelayMs) || 0;
+  if (delay > 0) {
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+  return transport.getLightMemoryPreference();
+});
+
+ipcMain.handle('maicong:set-lighting-memory-preference', async (_event, spec) => {
+  if (!spec || typeof spec !== 'object') {
+    return { success: false, error: 'Invalid lighting memory preference' };
+  }
+  if (spec.fallback !== 'hardware' && spec.fallback !== 'local') {
+    return { success: false, error: 'fallback must be hardware or local' };
+  }
+  return transport.setLightMemoryFallback(spec.fallback);
+});
+
+ipcMain.handle('maicong:get-still-library', async () => {
+  return transport.getStillLibrary();
+});
+
+ipcMain.handle('maicong:create-still', async (_event, name) => {
+  if (typeof name !== 'string') {
+    return { success: false, error: 'Still name must be a string' };
+  }
+  const res = await transport.createStill(name);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:rename-still', async (_event, spec) => {
+  if (!spec || typeof spec !== 'object' || typeof spec.key !== 'string' || typeof spec.name !== 'string') {
+    return { success: false, error: 'Still rename requires key and name' };
+  }
+  const res = await transport.renameStill(spec.key, spec.name);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:delete-still', async (_event, spec) => {
+  if (!spec || typeof spec !== 'object' || typeof spec.key !== 'string') {
+    return { success: false, error: 'Still delete requires a key' };
+  }
+  const res = await transport.deleteStill(spec.key, {
+    activeKey: typeof spec.activeKey === 'string' ? spec.activeKey : undefined,
+    profileIndex: spec.profileIndex
+  });
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:update-still-frames', async (_event, spec) => {
+  if (!spec || typeof spec !== 'object' || typeof spec.key !== 'string' || !spec.colors || typeof spec.colors !== 'object') {
+    return { success: false, error: 'Still frame update requires key and colors' };
+  }
+  const res = await transport.updateStillFrames(spec.key, spec.colors, {
+    profileIndex: spec.profileIndex,
+    applyDevice: spec.applyDevice !== false,
+    expectedKey: spec.expectedKey
+  });
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:select-still', async (_event, spec) => {
+  if (!spec || typeof spec !== 'object' || typeof spec.key !== 'string') {
+    return { success: false, error: 'Still select requires a key' };
+  }
+  const p = spec.profileIndex !== undefined ? spec.profileIndex : null;
+  if (p !== null && (!Number.isInteger(p) || p < 0 || p > 3)) {
+    return { success: false, error: 'Invalid profile index' };
+  }
+  const res = await transport.selectStill(
+    p === null ? transport.editTarget.profileIndex : p,
+    spec.key,
+    {
+      applyCustom0: spec.applyCustom0 === true,
+      lightingPatch: spec.lightingPatch && typeof spec.lightingPatch === 'object' ? spec.lightingPatch : undefined,
+      persistMemory: spec.persistMemory
+    }
+  );
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:get-gif-library', async () => {
+  return transport.getGifLibrary();
+});
+
+ipcMain.handle('maicong:create-gif', async (_event, spec) => {
+  if (!spec || typeof spec !== 'object' || typeof spec.name !== 'string') {
+    return { success: false, error: 'GIF create requires a name' };
+  }
+  const res = await transport.createGif(spec.name, spec.data, spec.extra);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:import-gif', async (_event, spec) => {
+  let buf = null;
+  let name = spec && typeof spec.name === 'string' ? spec.name : null;
+
+  if (spec && spec.buffer) {
+    let raw = spec.buffer;
+    if (Buffer.isBuffer(raw)) {
+      buf = raw;
+    } else if (Array.isArray(raw)) {
+      buf = Buffer.from(raw);
+    } else if (raw && raw.type === 'Buffer' && Array.isArray(raw.data)) {
+      buf = Buffer.from(raw.data);
+    } else if (raw && raw.data && Array.isArray(raw.data)) {
+      buf = Buffer.from(raw.data);
+    } else if (ArrayBuffer.isView(raw)) {
+      buf = Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength);
+    } else if (raw instanceof ArrayBuffer) {
+      buf = Buffer.from(raw);
+    }
+    if (buf && buf.length > 5 * 1024 * 1024) {
+      return { success: false, error: 'GIF file size exceeds 5MB limit' };
+    }
+  } else if (spec && typeof spec.filePath === 'string') {
+    try {
+      const stat = fs.statSync(spec.filePath);
+      if (stat.size > 5 * 1024 * 1024) {
+        return { success: false, error: 'GIF file size exceeds 5MB limit' };
+      }
+      buf = fs.readFileSync(spec.filePath);
+      if (!name) {
+        name = path.basename(spec.filePath, path.extname(spec.filePath));
+      }
+    } catch (err) {
+      return { success: false, error: err.message || 'Failed to read GIF file' };
+    }
+  } else {
+    if (!win) return { success: false, error: 'No active window' };
+    const opened = await dialog.showOpenDialog(win, {
+      title: 'Import GIF Animation',
+      filters: [{ name: 'GIF Animation', extensions: ['gif'] }],
+      properties: ['openFile']
+    });
+    if (opened.canceled || opened.filePaths.length === 0) {
+      return { success: false, canceled: true };
+    }
+    const targetFile = opened.filePaths[0];
+    try {
+      const stat = fs.statSync(targetFile);
+      if (stat.size > 5 * 1024 * 1024) {
+        return { success: false, error: 'GIF file size exceeds 5MB limit' };
+      }
+      buf = fs.readFileSync(targetFile);
+      if (!name) {
+        name = path.basename(targetFile, path.extname(targetFile));
+      }
+    } catch (err) {
+      return { success: false, error: err.message || 'Failed to read GIF file' };
+    }
+  }
+
+  if (!buf) {
+    return { success: false, error: 'No GIF data provided' };
+  }
+
+  const res = await transport.importGifFile(buf, name);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:rename-gif', async (_event, spec) => {
+  if (!spec || typeof spec !== 'object' || typeof spec.key !== 'string' || typeof spec.name !== 'string') {
+    return { success: false, error: 'GIF rename requires key and name' };
+  }
+  const res = await transport.renameGif(spec.key, spec.name);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:delete-gif', async (_event, spec) => {
+  if (!spec || typeof spec !== 'object' || typeof spec.key !== 'string') {
+    return { success: false, error: 'GIF delete requires a key' };
+  }
+  const res = await transport.deleteGif(spec.key, {
+    activeKey: typeof spec.activeKey === 'string' ? spec.activeKey : undefined,
+    profileIndex: spec.profileIndex
+  });
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:update-gif', async (_event, spec) => {
+  if (!spec || typeof spec !== 'object' || typeof spec.key !== 'string' || !spec.updates) {
+    return { success: false, error: 'GIF update requires key and updates' };
+  }
+  const res = await transport.updateGif(spec.key, spec.updates);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:select-gif', async (_event, spec) => {
+  if (!spec || typeof spec !== 'object' || typeof spec.key !== 'string') {
+    return { success: false, error: 'GIF select requires a key' };
+  }
+  const p = spec.profileIndex !== undefined ? spec.profileIndex : null;
+  if (p !== null && (!Number.isInteger(p) || p < 0 || p > 3)) {
+    return { success: false, error: 'Invalid profile index' };
+  }
+  const res = await transport.selectGif(
+    p === null ? transport.editTarget.profileIndex : p,
+    spec.key,
+    {
+      applyCustom0: spec.applyCustom0 === true,
+      lightingPatch: spec.lightingPatch && typeof spec.lightingPatch === 'object' ? spec.lightingPatch : undefined,
+      persistMemory: spec.persistMemory
+    }
+  );
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:set-gif-playback', async (_event, action) => {
+  if (typeof action !== 'string') {
+    return { success: false, error: 'Action must be a string' };
+  }
+  const res = transport.setGifPlayback(action);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:apply-lighting', async (_event, params, profileIndex, options) => {
+  if (!params || typeof params !== 'object') {
+    return { success: false, error: 'Invalid lighting parameters object' };
+  }
+  const val = validators.validateLightingParams(params);
+  if (!val.valid) {
+    return { success: false, error: val.error };
+  }
+  const p = profileIndex !== undefined ? profileIndex : null;
+  if (p !== null && (!Number.isInteger(p) || p < 0 || p > 3)) {
+    return { success: false, error: 'Invalid profile index' };
+  }
+  const opts = options && typeof options === 'object' ? options : {};
+  const res = await transport.applyLighting(params, p, opts);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:apply-settings', async (_event, settings, profileIndex) => {
+  if (!settings || typeof settings !== 'object') {
+    return { success: false, error: 'Invalid settings object' };
+  }
+  const val = validators.validateSettingsParams(settings);
+  if (!val.valid) {
+    return { success: false, error: val.error };
+  }
+  const p = profileIndex !== undefined ? profileIndex : null;
+  if (p !== null && (!Number.isInteger(p) || p < 0 || p > 3)) {
+    return { success: false, error: 'Invalid profile index' };
+  }
+  const res = await transport.applySettings(settings, p);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:apply-keymap', async (_event, profileIndex, layer, keyUpdates, options) => {
+  if (!Number.isInteger(profileIndex) || profileIndex < 0 || profileIndex > 3) {
+    return { success: false, error: 'Invalid profile index' };
+  }
+  if (!Number.isInteger(layer) || layer < 0 || layer > 3) {
+    return { success: false, error: 'Invalid layer' };
+  }
+  if (!Array.isArray(keyUpdates)) {
+    return { success: false, error: 'keyUpdates must be an array' };
+  }
+
+  const val = validators.validateKeymapUpdates(keyUpdates);
+  if (!val.valid) {
+    return { success: false, error: val.error };
+  }
+
+  // Validate every update slot against physical keys
+  for (const u of keyUpdates) {
+    const slot = u.slot !== undefined ? u.slot : u.index;
+    if (!VALID_PHYSICAL_SLOTS.has(slot)) {
+      return { success: false, error: `Invalid key slot: ${slot}. Non-physical slots cannot be modified.` };
+    }
+  }
+
+  const res = await transport.applyKeymap(profileIndex, layer, keyUpdates, options && typeof options === 'object' ? options : undefined);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:apply-key-colors', async (_event, profileIndex, colors) => {
+  if (!Number.isInteger(profileIndex) || profileIndex < 0 || profileIndex > 3) {
+    return { success: false, error: 'Invalid profile index' };
+  }
+  if (!colors || typeof colors !== 'object') {
+    return { success: false, error: 'Invalid key colors' };
+  }
+  const val = validators.validateKeyColors(colors);
+  if (!val.valid) {
+    return { success: false, error: val.error };
+  }
+  const res = await transport.applyKeyColors(profileIndex, colors);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:apply-macros', async (_event, macros) => {
+  if (!Array.isArray(macros) || macros.length > 16) {
+    return { success: false, error: 'Invalid macros: must be array with at most 16 slots' };
+  }
+  const val = validators.validateMacroSlots(macros);
+  if (!val.valid) {
+    return { success: false, error: val.error };
+  }
+  const res = await transport.applyMacros(macros);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:is-harness', async () => isDevHarness);
+
+ipcMain.handle('maicong:get-macro-metadata', async () => {
+  const { meta, recovered } = macroMetadata.loadMacroMetadata();
+  return { success: true, meta, recovered: Boolean(recovered) };
+});
+
+ipcMain.handle('maicong:set-macro-metadata', async (_event, incoming) => {
+  try {
+    const val = validators.validateMacroMetadata(incoming);
+    if (!val.valid) {
+      return { success: false, error: val.error };
+    }
+    const saved = macroMetadata.saveMacroMetadata(incoming);
+    return { success: true, meta: saved };
+  } catch (err) {
+    return { success: false, error: err.message || 'Failed to save macro metadata' };
+  }
+});
+
+ipcMain.handle('maicong:export-profile', async (_event, profileIndex) => {
+  if (!win) return { success: false, error: 'No active window' };
+
+  let targetProfile = 0;
+  if (Number.isInteger(profileIndex)) {
+    targetProfile = profileIndex;
+  } else if (profileIndex && Number.isInteger(profileIndex.profileIndex)) {
+    targetProfile = profileIndex.profileIndex;
+  } else if (transport.lastState && Number.isInteger(transport.lastState.activeProfileIndex)) {
+    targetProfile = transport.lastState.activeProfileIndex;
+  }
+  if (targetProfile < 0 || targetProfile > 3) targetProfile = 0;
+
+  if (!transport.device || transport.needsReconnect) {
+    return { success: false, error: 'Device not connected or requires reconnect' };
+  }
+
+  // Fresh atomic backend read transaction projecting verified physical slots
+  const exportRes = await transport.exportProfile(targetProfile);
+  if (!exportRes.success || !exportRes.data) {
+    return { success: false, error: exportRes.error || 'Failed to export fresh profile from hardware' };
+  }
+
+  let filePath;
+  if (mockUiTest && !app.isPackaged) {
+    const artifacts = path.join(__dirname, '..', 'test-artifacts');
+    fs.mkdirSync(artifacts, { recursive: true });
+    filePath = path.join(artifacts, `mock-ui-export-profile-${targetProfile}.json`);
+  } else {
+    const save = await dialog.showSaveDialog(win, {
+      title: 'Export Keyboard Profile',
+      defaultPath: `mchose-g75v2-profile-${targetProfile + 1}.json`,
+      filters: [{ name: 'JSON Profile', extensions: ['json'] }]
+    });
+    if (save.canceled || !save.filePath) return { success: false, canceled: true };
+    filePath = save.filePath;
+  }
+
+  try {
+    const { meta } = macroMetadata.loadMacroMetadata();
+    const overlaid = macroMetadata.overlayExportMacros(exportRes.data.macros, meta);
+    const data = {
+      ...exportRes.data,
+      macros: overlaid.macros,
+      macroMetadata: overlaid.macroMetadata
+    };
+    const schema = validators.validateProfileSchema(data);
+    if (!schema.valid) {
+      return { success: false, error: schema.error };
+    }
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+    return { success: true, filePath, data };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('maicong:apply-profile', async (_event, profileData, profileIndex) => {
+  if (!profileData || typeof profileData !== 'object') {
+    return { success: false, error: 'Invalid profile data' };
+  }
+  const p = profileIndex !== undefined ? profileIndex : null;
+  if (p !== null && (!Number.isInteger(p) || p < 0 || p > 3)) {
+    return { success: false, error: 'Invalid profile index' };
+  }
+  const res = await transport.applyProfile(profileData, p);
+  if (res.success) {
+    await transport.queryStatus();
+  }
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:set-edit-target', (_event, profileIndex, layer) => {
+  const res = transport.setEditTarget(profileIndex, layer === undefined ? null : layer);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:enable-profiles', async (_event, newCount) => {
+  const count = newCount === undefined ? 4 : newCount;
+  if (!Number.isInteger(count) || count < 1 || count > 4) {
+    return { success: false, error: 'Profile count must be integer 1..4' };
+  }
+  const res = await transport.enableProfiles(count);
+  if (res.success) {
+    await transport.queryStatus();
+  }
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:read-func-config', async (_event, profileIndex) => {
+  const p = Number.isInteger(profileIndex) ? profileIndex : 0;
+  if (p < 0 || p > 3) {
+    return { success: false, error: 'Invalid profile index' };
+  }
+  return transport.readFuncConfig(p);
+});
+
+ipcMain.handle('maicong:read-advanced', async (_event, profileIndex) => {
+  const p = Number.isInteger(profileIndex) ? profileIndex : 0;
+  if (p < 0 || p > 3) {
+    return { success: false, error: 'Invalid profile index' };
+  }
+  const res = await transport.readAdvanced(p);
+  return res;
+});
+
+ipcMain.handle('maicong:apply-advanced', async (_event, spec) => {
+  if (!spec || typeof spec !== 'object') {
+    return { success: false, error: 'Invalid advanced binding spec' };
+  }
+  const val = validators.validateAdvancedBinding(spec);
+  if (!val.valid) {
+    return { success: false, error: val.error };
+  }
+  const res = await transport.applyAdvancedBinding(spec);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:remove-advanced', async (_event, profileIndex, layer, slot) => {
+  if (!Number.isInteger(profileIndex) || profileIndex < 0 || profileIndex > 3) {
+    return { success: false, error: 'Invalid profile index' };
+  }
+  if (!Number.isInteger(layer) || layer < 0 || layer > 3) {
+    return { success: false, error: 'Invalid layer' };
+  }
+  if (!Number.isInteger(slot)) {
+    return { success: false, error: 'Invalid slot' };
+  }
+  const res = await transport.removeAdvancedBinding(profileIndex, layer, slot);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:clear-all-advanced', async (_event, spec) => {
+  if (!spec || typeof spec !== 'object') {
+    return { success: false, error: 'Invalid clear-all advanced spec' };
+  }
+  const val = validators.validateClearAllAdvanced(spec);
+  if (!val.valid) {
+    return { success: false, error: val.error };
+  }
+  const res = await transport.clearAllAdvancedBindings(spec);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:apply-advanced-local', async (_event, payload) => {
+  if (!payload || typeof payload !== 'object' || !payload.spec || !payload.snapshot) {
+    return { success: false, error: 'Invalid local advanced payload', hardwareWrites: 0 };
+  }
+  const val = validators.validateAdvancedBinding(payload.spec);
+  if (!val.valid) {
+    return { success: false, error: val.error, hardwareWrites: 0 };
+  }
+  const defaults = getDefaultLayersData();
+  return advancedPlan.applyAdvancedToLocalSnapshot(payload.snapshot, payload.spec, defaults);
+});
+
+ipcMain.handle('maicong:clear-all-advanced-local', async (_event, payload) => {
+  if (!payload || typeof payload !== 'object' || !payload.snapshot) {
+    return { success: false, error: 'Invalid local clear-all payload', hardwareWrites: 0 };
+  }
+  const defaults = getDefaultLayersData();
+  return advancedPlan.clearAllAdvancedOnLocalSnapshot(payload.snapshot, defaults);
+});
+
+ipcMain.handle('maicong:prepare-factory-reset', async (_event, scope) => {
+  if (scope !== 'active' && scope !== 'all') {
+    return { success: false, error: 'scope must be "active" or "all"' };
+  }
+  const res = await transport.prepareFactoryReset({ scope });
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:commit-factory-reset', async (_event, spec) => {
+  if (!spec || typeof spec !== 'object') {
+    return { success: false, error: 'Invalid reset spec', dispatched: false };
+  }
+  if (spec.scope !== 'active' && spec.scope !== 'all') {
+    return { success: false, error: 'scope must be "active" or "all"', dispatched: false };
+  }
+  const res = await transport.commitFactoryReset({
+    scope: spec.scope,
+    expectedActiveProfileIndex: spec.expectedActiveProfileIndex,
+    expectedIdentity: spec.expectedIdentity,
+    expectedGeneration: spec.expectedGeneration,
+    expectedResetEpoch: spec.expectedResetEpoch
+  });
+  if (res && res.success) {
+    macroMetadata.attachConfirmedResetMetadata(res, spec.scope);
+    const idx = Number.isInteger(res.activeProfileIndex) ? res.activeProfileIndex : null;
+    transport.clearLightingMemoryFallback(spec.scope, idx);
+  }
+  broadcastState();
+  return res;
+});
+
+function broadcastFirmwareProgress(event) {
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('maicong:firmware-progress', event);
+  }
+}
+
+function ensureFirmwareSession() {
+  if (firmwareSession) return firmwareSession;
+  const options = {
+    transport,
+    backupDir: app.getPath('userData'),
+    onProgress: broadcastFirmwareProgress,
+    chooseFile: async () => {
+      if (!win) return { canceled: true };
+      const opened = await dialog.showOpenDialog(win, {
+        title: 'Choose official G75 V2 firmware package',
+        filters: [
+          { name: 'Firmware package', extensions: ['bin'] },
+          { name: 'All files', extensions: ['*'] }
+        ],
+        properties: ['openFile']
+      });
+      if (opened.canceled || opened.filePaths.length === 0) return { canceled: true };
+      return { canceled: false, filePath: opened.filePaths[0] };
+    }
+  };
+  if (mockUiTest && !app.isPackaged) {
+    const mockFw = require(path.join(__dirname, '..', 'test', 'mock-firmware-io.cjs'));
+    const artifacts = path.join(__dirname, '..', 'test-artifacts');
+    fs.mkdirSync(artifacts, { recursive: true });
+    const receiverPath = path.join(artifacts, 'mock-ui-firmware-receiver.bin');
+    const mismatchPath = path.join(artifacts, 'mock-ui-firmware-mismatch.bin');
+    fs.writeFileSync(receiverPath, mockFw.RECEIVER_BYTES);
+    fs.writeFileSync(mismatchPath, mockFw.MISMATCH_BYTES);
+    options.catalog = mockFw.createMockUiCatalog();
+    options.nativeIoFactory = (nativeOptions = {}) => {
+      const firmwareBackup = require('./firmware-backup.cjs');
+      const identity = nativeOptions.reviewedIdentity || firmwareBackup.currentDeviceIdentity(transport);
+      const targetKey = nativeOptions.target || 'receiver';
+      return new mockFw.MockNativeFirmwareIo({
+        normalIdentity: identity,
+        bootIdentity: mockFw.bootIdentityFromNormal(identity, targetKey),
+        returnedNormalIdentity: identity
+      });
+    };
+    options.chooseFile = async (spec = {}) => {
+      const fixture = spec && spec.fixture === 'mismatch' ? mismatchPath : receiverPath;
+      return { canceled: false, filePath: fixture };
+    };
+    transport.backupFirmwareConfiguration = async (backupOptions = {}) => ({
+      success: true,
+      persisted: true,
+      readyForUpdate: true,
+      filePath: backupOptions.filePath,
+      backupRetained: true,
+      backup: { schema: 'mock-ui-firmware' }
+    });
+    transport.restoreFirmwareConfiguration = async () => ({
+      success: true,
+      restorationVerified: true,
+      backupRetained: true
+    });
+  }
+  firmwareSession = new FirmwareSession(options);
+  return firmwareSession;
+}
+
+ipcMain.handle('maicong:firmware-status', async () => {
+  return ensureFirmwareSession().status();
+});
+
+ipcMain.handle('maicong:firmware-choose-package', async (_event, spec) => {
+  const session = ensureFirmwareSession();
+  if (mockUiTest && !app.isPackaged) {
+    const mockFw = require(path.join(__dirname, '..', 'test', 'mock-firmware-io.cjs'));
+    const artifacts = path.join(__dirname, '..', 'test-artifacts');
+    const filePath = spec && spec.fixture === 'mismatch'
+      ? path.join(artifacts, 'mock-ui-firmware-mismatch.bin')
+      : path.join(artifacts, 'mock-ui-firmware-receiver.bin');
+    if (!fs.existsSync(filePath)) {
+      fs.mkdirSync(artifacts, { recursive: true });
+      fs.writeFileSync(
+        filePath,
+        spec && spec.fixture === 'mismatch' ? mockFw.MISMATCH_BYTES : mockFw.RECEIVER_BYTES
+      );
+    }
+    return session.selectPackageFile(filePath);
+  }
+  return session.choosePackage();
+});
+
+ipcMain.handle('maicong:firmware-review', async () => {
+  return ensureFirmwareSession().review();
+});
+
+ipcMain.handle('maicong:firmware-start', async (_event, spec) => {
+  const confirmed = Boolean(spec && (spec.confirmed === true || spec.confirm === true || spec.confirmation === true));
+  return ensureFirmwareSession().confirmStart({ confirmed });
+});
+
+ipcMain.handle('maicong:firmware-cancel', async (_event, reason) => {
+  return ensureFirmwareSession().cancel(reason);
+});
+
+ipcMain.handle('maicong:firmware-dismiss-review', async () => {
+  return ensureFirmwareSession().dismissReview();
+});
+
+ipcMain.handle('maicong:import-profile', async () => {
+  if (!win) return { success: false, error: 'No active window' };
+  let targetFile;
+  if (mockUiTest && !app.isPackaged) {
+    targetFile = path.join(__dirname, '..', 'test-artifacts', 'mock-ui-export-profile-0.json');
+    if (!fs.existsSync(targetFile)) {
+      return { success: false, error: 'No mock export file to import' };
+    }
+  } else {
+    const opened = await dialog.showOpenDialog(win, {
+      title: 'Import Keyboard Profile',
+      filters: [{ name: 'JSON Profile', extensions: ['json'] }],
+      properties: ['openFile']
+    });
+    if (opened.canceled || opened.filePaths.length === 0) return { success: false, canceled: true };
+    targetFile = opened.filePaths[0];
+  }
+
+  try {
+    const stat = fs.statSync(targetFile);
+
+    // Strict 1MB size limit to prevent IPC / memory exhaustion
+    if (stat.size > 1024 * 1024) {
+      return { success: false, error: 'File size exceeds 1MB limit' };
+    }
+
+    const content = fs.readFileSync(targetFile, 'utf8');
+    const parsed = JSON.parse(content);
+
+    // Basic schema sanity check
+    if (!parsed || typeof parsed !== 'object') {
+      return { success: false, error: 'Invalid JSON file content' };
+    }
+
+    // Prevalidate full schema before returning preview
+    const val = validators.validateProfileSchema(parsed);
+    if (!val.valid) {
+      return { success: false, error: `Invalid profile schema: ${val.error}` };
+    }
+
+    return {
+      success: true,
+      data: parsed,
+      filePath: targetFile
+    };
+  } catch (err) {
+    return { success: false, error: `Failed to import profile: ${err.message}` };
+  }
+});
+
+ipcMain.handle('maicong:get-profile-library', async () => {
+  return transport.getProfileLibrary();
+});
+
+ipcMain.handle('maicong:create-local-profile', async (_event, name) => {
+  const res = await transport.createLocalProfile(name);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:copy-onboard-to-local', async (_event, spec) => {
+  const profileIndex = spec && Number.isInteger(spec.profileIndex) ? spec.profileIndex : 0;
+  const res = await transport.copyOnboardToLocal(profileIndex, spec && spec.name);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:rename-profile', async (_event, spec) => {
+  if (!spec || typeof spec !== 'object') return { success: false, error: 'Invalid rename spec' };
+  const res = await transport.renameProfile(spec);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:delete-local-profile', async (_event, key) => {
+  if (typeof key !== 'string') return { success: false, error: 'Invalid profile key' };
+  const res = await transport.deleteLocalProfile(key);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:delete-onboard-profile', async (_event, key) => {
+  if (typeof key !== 'string') return { success: false, error: 'Invalid profile key' };
+  const res = await transport.deleteOnboardProfile(key);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:reorder-profiles', async (_event, keys) => {
+  if (!Array.isArray(keys)) return { success: false, error: 'Reorder keys must be an array' };
+  const res = await transport.reorderProfiles(keys);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:move-local-to-onboard', async (_event, spec) => {
+  if (!spec || typeof spec.sourceKey !== 'string') return { success: false, error: 'Invalid move spec' };
+  const res = await transport.moveLocalToOnboard(spec.sourceKey, spec.targetKey || null, { activate: spec.activate !== false });
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:copy-onboard-to-onboard', async (_event, spec) => {
+  if (!spec || typeof spec.sourceKey !== 'string' || typeof spec.targetKey !== 'string') {
+    return { success: false, error: 'Invalid onboard copy spec' };
+  }
+  const res = await transport.copyOnboardToOnboard(spec.sourceKey, spec.targetKey, { activate: spec.activate !== false });
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:move-onboard-to-local', async (_event, spec) => {
+  if (!spec || typeof spec.sourceKey !== 'string') return { success: false, error: 'Invalid move spec' };
+  const res = await transport.moveOnboardToLocal(spec.sourceKey, spec.localTargetKey);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:list-app-binds', async () => {
+  return transport.listAppBinds();
+});
+
+ipcMain.handle('maicong:bind-profile-app', async (_event, spec) => {
+  if (!spec || !Number.isInteger(spec.profileIndex)) {
+    return { success: false, error: 'profileIndex must be 0..3' };
+  }
+  let payload = {
+    profileIndex: spec.profileIndex,
+    bundleId: spec.bundleId,
+    displayName: spec.displayName,
+    appPath: spec.appPath
+  };
+  if (!payload.bundleId) {
+    if (mockUiTest && !app.isPackaged) {
+      payload.bundleId = 'com.mock.game';
+      payload.displayName = 'Mock Game';
+      payload.appPath = '/Applications/Mock Game.app';
+    } else {
+      if (!win) return { success: false, error: 'No active window' };
+      const opened = await dialog.showOpenDialog(win, {
+        title: 'Choose a game or app to bind',
+        defaultPath: '/Applications',
+        properties: ['openFile'],
+        filters: [{ name: 'Applications', extensions: ['app'] }]
+      });
+      if (opened.canceled || opened.filePaths.length === 0) return { success: false, canceled: true };
+      payload.appPath = opened.filePaths[0];
+      payload.displayName = path.basename(payload.appPath, '.app');
+      payload.bundleId = spec.bundleId || payload.displayName.replace(/\s+/g, '.').toLowerCase();
+      try {
+        const plist = path.join(payload.appPath, 'Contents', 'Info.plist');
+        if (fs.existsSync(plist)) {
+          const { execFileSync } = require('node:child_process');
+          const id = execFileSync('/usr/bin/defaults', ['read', plist, 'CFBundleIdentifier'], { encoding: 'utf8', timeout: 1500 }).trim();
+          if (id) payload.bundleId = id;
+          const name = execFileSync('/usr/bin/defaults', ['read', plist, 'CFBundleName'], { encoding: 'utf8', timeout: 1500 }).trim();
+          if (name) payload.displayName = name;
+        }
+      } catch {
+        // Keep path-derived id; bind validation still requires a bundle-shaped id.
+      }
+    }
+  }
+  const res = transport.bindProfileApp(payload);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:unbind-profile-app', async (_event, profileIndex) => {
+  const res = transport.unbindProfileApp(profileIndex);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:set-mock-frontmost', async (_event, spec) => {
+  if (!(mockUiTest && !app.isPackaged)) {
+    return { success: false, error: 'Mock frontmost is only available in the unpackaged harness' };
+  }
+  global.__maicongMockFrontmost = spec && spec.bundleId
+    ? { bundleId: String(spec.bundleId), displayName: spec.displayName || String(spec.bundleId) }
+    : null;
+  if (appBindWatcher) await appBindWatcher.tick();
+  broadcastState();
+  return { success: true, frontmost: global.__maicongMockFrontmost, lastSwitch: appBindWatcher && appBindWatcher.lastSwitch };
+});
+
+ipcMain.handle('maicong:load-local-profile-preview', async (_event, key) => {
+  if (typeof key !== 'string') return { success: false, error: 'Invalid profile key' };
+  const res = transport.loadLocalProfilePreview(key);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:save-local-profile-draft', async (_event, spec) => {
+  if (!spec || typeof spec.key !== 'string' || !spec.data) {
+    return { success: false, error: 'Invalid local draft' };
+  }
+  const res = await transport.saveLocalProfileDraft(spec.key, spec.data);
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:set-edit-source', async (_event, spec) => {
+  const res = transport.setEditSource(spec || {});
+  broadcastState();
+  return res;
+});
+
+ipcMain.handle('maicong:import-official-profile', async () => {
+  if (!win) return { success: false, error: 'No active window' };
+  let targetFile;
+  if (mockUiTest && !app.isPackaged) {
+    targetFile = path.join(__dirname, '..', 'test-artifacts', 'mock-ui-official-import.json');
+    if (!fs.existsSync(targetFile)) {
+      return { success: false, error: 'No mock official import file' };
+    }
+  } else {
+    const opened = await dialog.showOpenDialog(win, {
+      title: 'Import official keyboard profile',
+      filters: [{ name: 'JSON Profile', extensions: ['json'] }],
+      properties: ['openFile']
+    });
+    if (opened.canceled || opened.filePaths.length === 0) return { success: false, canceled: true };
+    targetFile = opened.filePaths[0];
+  }
+  try {
+    const stat = fs.statSync(targetFile);
+    if (stat.size > 1024 * 1024) return { success: false, error: 'File size exceeds 1MB limit' };
+    const parsed = JSON.parse(fs.readFileSync(targetFile, 'utf8'));
+    const before = transport.lastState && transport.lastState.connected
+      ? (transport.device && transport.device.writtenBuffers ? transport.device.writtenBuffers.length : null)
+      : null;
+    void before;
+    const res = await transport.importOfficialProfile(parsed);
+    broadcastState();
+    return res;
+  } catch (err) {
+    return { success: false, error: err.message || 'Official import failed' };
+  }
+});
+
+ipcMain.handle('maicong:export-official-profile', async (_event, spec) => {
+  if (!win) return { success: false, error: 'No active window' };
+  const exported = await transport.exportOfficialProfile(spec || {});
+  if (!exported.success) return exported;
+  let filePath;
+  const name = (exported.data && exported.data.data && exported.data.data.name) || 'profile';
+  if (mockUiTest && !app.isPackaged) {
+    const artifacts = path.join(__dirname, '..', 'test-artifacts');
+    fs.mkdirSync(artifacts, { recursive: true });
+    filePath = path.join(artifacts, `mock-ui-official-export.json`);
+  } else {
+    const save = await dialog.showSaveDialog(win, {
+      title: 'Export official keyboard profile',
+      defaultPath: `${name}.json`,
+      filters: [{ name: 'JSON Profile', extensions: ['json'] }]
+    });
+    if (save.canceled || !save.filePath) return { success: false, canceled: true };
+    filePath = save.filePath;
+  }
+  fs.writeFileSync(filePath, JSON.stringify(exported.data, null, 2), 'utf8');
+  return { success: true, filePath, data: exported.data };
+});
+
+function setupAppMenu() {
+  const isMac = process.platform === 'darwin';
+  const template = [
+    ...(isMac ? [{
+      label: 'Maicong Studio',
+      submenu: [
+        {
+          label: 'About Maicong Studio',
+          click: () => {
+            dialog.showMessageBox(win, {
+              title: 'About Maicong Studio',
+              message: 'Maicong Studio for macOS',
+              detail: `Version ${app.getVersion()}\nStandalone 100% offline configurator for MCHOSE G75 V2 keyboards.\nBuilt with verified GLW hardware protocol over native node-hid.`
+            });
+          }
+        },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' }
+      ]
+    }] : []),
+    { role: 'editMenu' },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        ...(app.isPackaged ? [] : [{ role: 'toggleDevTools' }]),
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    },
+    { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [
+        {
+          label: 'Capability Matrix & Guide',
+          click: () => {
+            if (win && !win.isDestroyed()) {
+              win.webContents.send('maicong:navigate-tab', 'guide');
+            }
+          }
+        }
+      ]
+    }
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
+  });
+
+  app.whenReady().then(async () => {
+    setupAppMenu();
+
+    if (mockUiTest && !app.isPackaged) {
+      const { MockGlwMemoryDevice } = require(path.join(__dirname, '..', 'test', 'mock-glw-memory.cjs'));
+      const profileNames = require('./profile-names.cjs');
+      const tokenNames = require(path.join(__dirname, '..', 'test', 'fixtures', 'profile-names-i18n-default-onboard.json'));
+      const mockHid = new MockGlwMemoryDevice();
+      profileNames.seedDeviceProfileNames(mockHid, tokenNames.stored);
+      transport.installTestAdapter(mockHid);
+      global.__maicongMockHid = mockHid;
+      await transport.queryStatus();
+    }
+
+    global.__maicongMockFrontmost = mockUiTest && !app.isPackaged ? null : global.__maicongMockFrontmost;
+    appBindWatcher = new AppBindWatcher({
+      intervalMs: mockUiTest && !app.isPackaged ? 40 : 1000,
+      ignoreBundleIds: ['dev.openmaicong.studio', 'com.github.Electron', 'Electron'],
+      getBinds: () => (transport.listAppBinds().binds || []),
+      getActiveProfile: () => {
+        const base = transport.lastState && transport.lastState.base;
+        if (base && Number.isInteger(base.activeProfile)) return base.activeProfile;
+        return Number.isInteger(transport.lastState.activeProfileIndex)
+          ? transport.lastState.activeProfileIndex
+          : null;
+      },
+      isConnected: () => Boolean(transport.lastState && transport.lastState.connected),
+      isBusy: () => Boolean(
+        (typeof transport.isFirmwareExclusive === 'function' && transport.isFirmwareExclusive())
+        || transport.resetInFlight
+      ),
+      getFrontmost: mockUiTest && !app.isPackaged
+        ? async () => global.__maicongMockFrontmost
+        : undefined,
+      switchProfile: async (idx) => {
+        const res = await transport.switchProfile(idx);
+        broadcastState();
+        return res;
+      }
+    });
+    appBindWatcher.start();
+
+    createWindow();
+
+    if (!isDevHarness) {
+      deviceWatcher = detector.startDeviceWatcher(async () => {
+        if (typeof transport.isFirmwareExclusive === 'function' && transport.isFirmwareExclusive()) {
+          // The updater owns the normal/boot transition.  Detector callbacks
+          // are not awaited by the watcher, so this gate must live here as
+          // well as in transport.connect()/queryStatus().
+          broadcastState();
+          return;
+        }
+        if (!transport.device || transport.needsReconnect) {
+          if (transport.needsReconnect) {
+            transport.disconnect();
+          }
+          const connectRes = transport.connect();
+          if (connectRes.success) {
+            await transport.queryStatus();
+          }
+        }
+        broadcastState();
+      }, 3000);
+    }
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
+
+    if (mockUiTest && !app.isPackaged) {
+      (async () => {
+        let mockTimer = null;
+        try {
+          const mockUiRunner = require(path.join(__dirname, '..', 'test', 'mock-ui-integration.cjs'));
+          const timeoutPromise = new Promise((_, reject) => {
+            mockTimer = setTimeout(() => reject(new Error('Mock UI verification timed out after 180000ms')), 180000);
+          });
+          await Promise.race([
+            mockUiRunner.run({
+              app,
+              getWindow: () => win,
+              getState: getCompleteState,
+              getMock: () => global.__maicongMockHid
+            }),
+            timeoutPromise
+          ]);
+          if (mockTimer) clearTimeout(mockTimer);
+          transport.disconnect();
+          console.log('[MockUI] Renderer integration against mock memory passed.');
+          app.exit(0);
+        } catch (err) {
+          if (mockTimer) clearTimeout(mockTimer);
+          transport.disconnect();
+          console.error('[MockUI] Renderer integration failed:', err);
+          app.exit(1);
+        }
+      })();
+    } else if (smoke && !app.isPackaged) {
+      const smokeRunner = require(path.join(__dirname, '..', 'test', 'smoke.cjs'));
+      (async () => {
+        let smokeTimer = null;
+        try {
+          const timeoutPromise = new Promise((_, reject) => {
+            smokeTimer = setTimeout(() => reject(new Error('Smoke verification timed out after 15000ms')), 15000);
+          });
+          await Promise.race([
+            smokeRunner.run({
+              app,
+              getWindow: () => win,
+              getState: getCompleteState
+            }),
+            timeoutPromise
+          ]);
+          if (smokeTimer) clearTimeout(smokeTimer);
+          deviceWatcher?.stop();
+          transport.disconnect();
+          console.log('[Smoke] Standalone macOS verification passed cleanly.');
+          app.exit(0);
+        } catch (err) {
+          if (smokeTimer) clearTimeout(smokeTimer);
+          deviceWatcher?.stop();
+          transport.disconnect();
+          console.error('[Smoke] Standalone verification failed:', err);
+          app.exit(1);
+        }
+      })();
+    }
+  });
+
+  app.on('before-quit', () => {
+    deviceWatcher?.stop();
+    if (appBindWatcher) appBindWatcher.stop();
+    transport.disconnect();
+  });
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+      app.quit();
+    }
+  });
+}

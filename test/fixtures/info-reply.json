@@ -1,0 +1,18 @@
+{
+  "provenance": "MCHOSE G75 V2 2.4G Receiver (VID 0x3837 PID 0x3033) hardware CMD 3 (GET_INFO) response captures",
+  "query56": {
+    "description": "Query CMD 3 with requested size 56. Hardware returns 38 bytes payload and echoes request checksum 0x38 (56).",
+    "headerHex": "aa03003826000000",
+    "payloadHex": "14013001ffff2c4a616e20313220323032362c32303a34313a3437322e344720446f6e676c65000000000000000000000000000000000000",
+    "firmwareRaw": "0x0114",
+    "rfFirmwareRaw": "0x0130",
+    "buildDateOffset": 6,
+    "buildDate": "Jan 12 2026, 20:41:47",
+    "dongleInfo": "2.4G Dongle"
+  },
+  "query38": {
+    "description": "Query CMD 3 with requested size 38. Hardware returns 38 bytes payload and echoes request checksum 0x26 (38).",
+    "headerHex": "aa03002626000000",
+    "payloadHex": "14013001ffff2c4a616e20313220323032362c32303a34313a3437322e344720446f6e676c65000000000000000000000000000000000000"
+  }
+}

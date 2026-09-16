@@ -1,0 +1,16 @@
+{
+  "source": "Read-only QA of packaged G75 V2 onboard custom-JSON names. Literal stored tokens, not a native encoder roundtrip.",
+  "vendor": "readable.js 12233 i18n<defaultOnboard> + (index===0 ? '' : index+1); WD replace /i18n<([^>]+)>/ with t(key); en defaultOnboard = Default Onboard",
+  "stored": [
+    "i18n<defaultOnboard>",
+    "i18n<defaultOnboard>2",
+    "i18n<defaultOnboard>3",
+    "i18n<defaultOnboard>4"
+  ],
+  "display": [
+    "Default Onboard",
+    "Default Onboard2",
+    "Default Onboard3",
+    "Default Onboard4"
+  ]
+}
