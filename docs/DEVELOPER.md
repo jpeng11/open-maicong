@@ -173,6 +173,27 @@ npm run pack    # .app
 npm run dist    # DMG and ZIP
 ```
 
+`build.artifactName` is `Maicong-Studio-${version}-${arch}.${ext}` so GitHub Release assets and the Homebrew cask URL stay space-free.
+
+### Homebrew cask
+
+Users install with:
+
+```bash
+brew install --cask --no-quarantine jpeng11/open-maicong/maicong-studio
+```
+
+That taps [`jpeng11/homebrew-open-maicong`](https://github.com/jpeng11/homebrew-open-maicong). Keep `Casks/maicong-studio.rb` in this repo in sync with the tap copy.
+
+To ship a new version:
+
+1. Bump `version` in `package.json`.
+2. `npm run dist` (space-free staging path if needed).
+3. `shasum -a 256 dist/Maicong-Studio-<version>-arm64.dmg`
+4. Create GitHub release `v<version>` and upload that DMG (same filename).
+5. Set `version` and `sha256` in `Casks/maicong-studio.rb` and in the tap cask.
+6. Commit and push both repositories.
+
 ---
 
 ## Safety & Offline Design

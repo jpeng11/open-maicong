@@ -30,6 +30,7 @@
     "directories": {
       "output": "dist"
     },
+    "artifactName": "Maicong-Studio-${version}-${arch}.${ext}",
     "mac": {
       "category": "public.app-category.utilities",
       "icon": "build/icon.icns",

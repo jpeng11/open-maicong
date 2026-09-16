@@ -34,6 +34,22 @@ Cloud / official / Apex libraries, share-codes, CDN firmware download, and music
 
 ## Install and open
 
+### Homebrew (recommended, Apple Silicon)
+
+```bash
+brew install --cask --no-quarantine jpeng11/open-maicong/maicong-studio
+```
+
+That one command taps [`jpeng11/homebrew-open-maicong`](https://github.com/jpeng11/homebrew-open-maicong) and trusts only this cask. The current package is an **unsigned** Apple Silicon 0.1.0 build; `--no-quarantine` skips Gatekeeper isolation. If it is still blocked: System Settings → Privacy & Security → Open Anyway.
+
+Intel Macs: run from source or package with `npm run dist:all`.
+
+```bash
+brew upgrade --cask --no-quarantine maicong-studio   # upgrade
+brew uninstall --cask maicong-studio                 # uninstall
+brew uninstall --cask --zap maicong-studio           # uninstall and delete local data
+```
+
 If it is already installed:
 
 ```bash
@@ -42,9 +58,9 @@ open -a "Maicong Studio"
 
 Or search **Maicong Studio** in Launchpad / Spotlight. The bundle is `/Applications/Maicong Studio.app`.
 
-From a package: open `dist/Maicong Studio-0.1.0-arm64.dmg` in this repo and drag the app into Applications.
+### Disk image
 
-The current build is **unsigned** Apple Silicon. If Gatekeeper blocks it: System Settings → Privacy & Security → Open Anyway.
+Download `Maicong-Studio-*-arm64.dmg` from [GitHub Releases](https://github.com/jpeng11/open-maicong/releases) and drag the app into Applications. Local build output lives in `dist/` (not committed).
 
 > The packaged app can lag the source tree. For the latest code, run `npm start` in the project directory.
 

@@ -34,7 +34,23 @@
 
 ## 安装与打开
 
-已安装到本机时：
+### Homebrew（推荐，Apple Silicon）
+
+```bash
+brew install --cask --no-quarantine jpeng11/open-maicong/maicong-studio
+```
+
+一条命令会自动 tap [`jpeng11/homebrew-open-maicong`](https://github.com/jpeng11/homebrew-open-maicong)，并只信任这一条 cask。当前包为 **未签名** Apple Silicon 0.1.0，`--no-quarantine` 避免 Gatekeeper 隔离。若仍拦截：系统设置 → 隐私与安全性 → 仍要打开。
+
+Intel Mac 请从源码运行或自行打包（`npm run dist:all`）。
+
+```bash
+brew upgrade --cask --no-quarantine maicong-studio   # 升级
+brew uninstall --cask maicong-studio                 # 卸载
+brew uninstall --cask --zap maicong-studio           # 卸载并删除本机配置
+```
+
+已安装时：
 
 ```bash
 open -a "Maicong Studio"
@@ -42,9 +58,9 @@ open -a "Maicong Studio"
 
 或在「启动台 / Spotlight」搜索 **Maicong Studio**。应用位于 `/Applications/Maicong Studio.app`。
 
-从安装包安装：打开仓库 `dist/` 下的 `Maicong Studio-0.1.0-arm64.dmg`，将应用拖入「应用程序」。
+### 安装包
 
-当前包为 **未签名** Apple Silicon 构建。首次打开若被拦截：系统设置 → 隐私与安全性 → 仍要打开。
+从 [GitHub Releases](https://github.com/jpeng11/open-maicong/releases) 下载 `Maicong-Studio-*-arm64.dmg`，将应用拖入「应用程序」。本地打包产物在 `dist/`（不进 git）。
 
 > 安装包可能落后于源码。要跑最新源码：在项目目录执行 `npm start`。
 
