@@ -17,13 +17,10 @@ cask "maicong-studio" do
 
   app "Maicong Studio.app"
 
-  # Homebrew 7 dropped --no-quarantine. Clear Gatekeeper isolation on this
-  # unsigned Apple Silicon build so the first launch is not blocked.
-  postflight do
-    system_command "/usr/bin/xattr",
-                   args: ["-dr", "com.apple.quarantine", "#{appdir}/Maicong Studio.app"],
-                   sudo: false,
-                   must_succeed: false
+  postflight_steps do
+    run "/usr/bin/xattr",
+        args:         ["-dr", "com.apple.quarantine", "{{appdir}}/Maicong Studio.app"],
+        must_succeed: false
   end
 
   uninstall quit: "dev.openmaicong.studio"
