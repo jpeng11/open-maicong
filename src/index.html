@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -28,14 +28,18 @@
   <header id="main-header" class="os-titlebar">
     <div class="title-brand">
       <span class="app-title">Maicong Studio</span>
-      <span class="edition">Unofficial G75 V2</span>
+      <span class="edition" data-i18n="app.edition">Unofficial G75 V2</span>
     </div>
     <div class="titlebar-actions">
-      <button id="btn-scan" class="nav-btn" data-action="scan" title="Scan and reconnect MCHOSE USB hardware">
-        <svg class="line-icon"><use href="#i-search"/></svg> Scan
+      <div class="lang-switch" role="group" data-i18n-aria="nav.language" aria-label="Language">
+        <button type="button" id="lang-zh" class="lang-btn active" data-action="set-locale" data-locale="zh">中文</button>
+        <button type="button" id="lang-en" class="lang-btn" data-action="set-locale" data-locale="en">EN</button>
+      </div>
+      <button id="btn-scan" class="nav-btn" data-action="scan" data-i18n-title="nav.scanTitle" title="Scan and reconnect MCHOSE USB hardware">
+        <svg class="line-icon"><use href="#i-search"/></svg> <span data-i18n="nav.scan">Scan</span>
       </button>
-      <button id="btn-refresh" class="nav-btn" data-action="refresh-status" title="Refresh hardware state">
-        <svg class="line-icon"><use href="#i-refresh"/></svg> Refresh
+      <button id="btn-refresh" class="nav-btn" data-action="refresh-status" data-i18n-title="nav.refreshTitle" title="Refresh hardware state">
+        <svg class="line-icon"><use href="#i-refresh"/></svg> <span data-i18n="nav.refresh">Refresh</span>
       </button>
     </div>
   </header>
@@ -53,7 +57,7 @@
             <div id="device-connection-pill" class="connection-pill disconnected">
               <span class="pill-dot"></span>
               <svg class="line-icon"><use href="#i-radio"/></svg>
-              <span id="device-status-text">Offline</span>
+              <span id="device-status-text" data-i18n="status.offline">Offline</span>
             </div>
           </div>
         </div>
@@ -61,16 +65,16 @@
 
       <div id="edit-target-bar" class="sidebar-edit">
         <div class="edit-target-group">
-          <span class="selector-label">Edit target</span>
+          <span class="selector-label" data-i18n="sidebar.editTarget">Edit target</span>
           <select id="edit-profile-select" class="form-select inline" aria-label="Profile to edit">
             <option value="0">Profile 1</option>
             <option value="1">Profile 2</option>
             <option value="2">Profile 3</option>
             <option value="3">Profile 4</option>
           </select>
-          <button class="action-btn" id="btn-load-edit-target" data-action="load-edit-target">Load for editing</button>
-          <button class="action-btn primary" id="btn-activate-profile" data-action="activate-edit-profile">Activate on keyboard</button>
-          <button class="action-btn" id="btn-enable-fourth" data-action="enable-fourth-profile">Enable 4th profile</button>
+          <button class="action-btn" id="btn-load-edit-target" data-action="load-edit-target" data-i18n="sidebar.loadEdit">Load for editing</button>
+          <button class="action-btn primary" id="btn-activate-profile" data-action="activate-edit-profile" data-i18n="sidebar.activate">Activate on keyboard</button>
+          <button class="action-btn" id="btn-enable-fourth" data-action="enable-fourth-profile" data-i18n="sidebar.enableFourth">Enable 4th profile</button>
         </div>
         <div class="edit-target-status">
           <span id="hardware-active-label">Hardware active: Profile 1</span>
@@ -84,25 +88,25 @@
 
       <div id="profile-selector-group" class="sidebar-profiles">
         <div class="profile-library-head">
-          <span>Onboard</span>
+          <span data-i18n="sidebar.onboard">Onboard</span>
           <span id="profile-library-capacity" class="field-hint">0/20</span>
         </div>
-        <p class="profile-library-hint">Stored on the keyboard. Load edits without activating. Drag a custom profile onto a slot to write it.</p>
+        <p class="profile-library-hint" data-i18n="sidebar.onboardHint">Stored on the keyboard. Load edits without activating. Drag a custom profile onto a slot to write it.</p>
         <div id="onboard-profile-list"></div>
-        <div id="profile-free-slot" class="profile-drop-slot" data-drop="free-slot" hidden>Empty onboard slot — drop a custom profile here</div>
+        <div id="profile-free-slot" class="profile-drop-slot" data-drop="free-slot" hidden data-i18n="sidebar.freeSlot">Empty onboard slot — drop a custom profile here</div>
         <div class="profile-library-head">
-          <span>Custom</span>
+          <span data-i18n="sidebar.custom">Custom</span>
           <div class="profile-library-actions">
-            <button type="button" class="action-btn" data-action="create-local-profile" id="btn-create-local-profile">Add Local</button>
-            <button type="button" class="action-btn" data-action="import-official-profile" id="btn-import-official-profile">Import</button>
+            <button type="button" class="action-btn" data-action="create-local-profile" id="btn-create-local-profile" data-i18n="sidebar.addLocal">Add Local</button>
+            <button type="button" class="action-btn" data-action="import-official-profile" id="btn-import-official-profile" data-i18n="sidebar.import">Import</button>
           </div>
         </div>
-        <p class="profile-library-hint">Stored on this Mac for this keyboard. Preview does not write the device. Drag onto onboard to use.</p>
+        <p class="profile-library-hint" data-i18n="sidebar.customHint">Stored on this Mac for this keyboard. Preview does not write the device. Drag onto onboard to use.</p>
         <div id="local-profile-list"></div>
         <p id="profile-library-status" class="field-hint profile-library-status" role="status" aria-live="polite"></p>
         <div id="profile-library-progress" class="profile-library-progress" hidden>
           <div class="profile-progress-bar" id="profile-progress-bar"></div>
-          <span id="profile-library-progress-text">Writing configuration to onboard…</span>
+          <span id="profile-library-progress-text" data-i18n="sidebar.writing">Writing configuration to onboard…</span>
         </div>
       </div>
     </aside>
@@ -112,39 +116,39 @@
         <div class="view-tabs" role="tablist">
           <button id="tab-lighting" class="tab" role="tab" aria-selected="false" data-action="set-tab" data-tab="lighting">
             <svg class="line-icon lg"><use href="#i-sun"/></svg>
-            <span class="tab-label">Lighting</span>
+            <span class="tab-label" data-i18n="tab.lighting">Lighting</span>
           </button>
           <button id="tab-keymap" class="tab" role="tab" aria-selected="false" data-action="set-tab" data-tab="keymap">
             <svg class="line-icon lg"><use href="#i-keyboard"/></svg>
-            <span class="tab-label">Key settings</span>
+            <span class="tab-label" data-i18n="tab.keymap">Key settings</span>
           </button>
           <button id="tab-advanced" class="tab" role="tab" aria-selected="false" data-action="set-tab" data-tab="advanced">
             <svg class="line-icon lg"><use href="#i-layers"/></svg>
-            <span class="tab-label">Advanced keys</span>
+            <span class="tab-label" data-i18n="tab.advanced">Advanced keys</span>
           </button>
           <button id="tab-settings" class="tab" role="tab" aria-selected="false" data-action="set-tab" data-tab="settings">
             <svg class="line-icon lg"><use href="#i-sliders"/></svg>
-            <span class="tab-label">Performance</span>
+            <span class="tab-label" data-i18n="tab.performance">Performance</span>
           </button>
           <button id="tab-macros" class="tab" role="tab" aria-selected="false" data-action="set-tab" data-tab="macros">
             <svg class="line-icon lg"><use href="#i-list"/></svg>
-            <span class="tab-label">Macros</span>
+            <span class="tab-label" data-i18n="tab.macros">Macros</span>
           </button>
           <button id="tab-dashboard" class="tab tab-secondary active" role="tab" aria-selected="true" data-action="set-tab" data-tab="dashboard">
             <svg class="line-icon lg"><use href="#i-grid"/></svg>
-            <span class="tab-label">Overview</span>
+            <span class="tab-label" data-i18n="tab.overview">Overview</span>
           </button>
           <button id="tab-profiles" class="tab tab-secondary" role="tab" aria-selected="false" data-action="set-tab" data-tab="profiles">
             <svg class="line-icon lg"><use href="#i-box"/></svg>
-            <span class="tab-label">Backup</span>
+            <span class="tab-label" data-i18n="tab.backup">Backup</span>
           </button>
           <button id="tab-others" class="tab tab-secondary" role="tab" aria-selected="false" data-action="set-tab" data-tab="others">
             <svg class="line-icon lg"><use href="#i-tool"/></svg>
-            <span class="tab-label">Others</span>
+            <span class="tab-label" data-i18n="tab.others">Others</span>
           </button>
           <button id="tab-guide" class="tab tab-secondary" role="tab" aria-selected="false" data-action="set-tab" data-tab="guide">
             <svg class="line-icon lg"><use href="#i-book"/></svg>
-            <span class="tab-label">Guide</span>
+            <span class="tab-label" data-i18n="tab.guide">Guide</span>
           </button>
         </div>
       </nav>
@@ -159,9 +163,9 @@
     <section id="panel-dashboard" class="view-panel active">
       <div class="panel-header">
         <div>
-          <span class="eyebrow">HARDWARE OVERVIEW</span>
-          <h1>Device Status & Dashboard</h1>
-          <p class="subtitle">Connection, firmware, battery, and onboard profiles.</p>
+          <span class="eyebrow" data-i18n="dash.eyebrow">HARDWARE OVERVIEW</span>
+          <h1 data-i18n="dash.title">Device Status & Dashboard</h1>
+          <p class="subtitle" data-i18n="dash.subtitle">Connection, firmware, battery, and onboard profiles.</p>
         </div>
       </div>
 
@@ -170,35 +174,35 @@
         <div class="dash-card">
           <div class="dash-card-header">
             <span class="card-icon"><svg class="line-icon"><use href="#i-grid"/></svg></span>
-            <h2>Hardware Overview</h2>
+            <h2 data-i18n="dash.hardware">Hardware Overview</h2>
           </div>
           <div class="stats-list">
             <div class="stat-row">
-              <span class="stat-label">Model</span>
+              <span class="stat-label" data-i18n="dash.model">Model</span>
               <span id="dash-product" class="stat-value">MCHOSE G75 V2</span>
             </div>
             <div class="stat-row">
-              <span class="stat-label">Connection</span>
+              <span class="stat-label" data-i18n="dash.connection">Connection</span>
               <span id="dash-transport" class="stat-value">2.4GHz Wireless Receiver</span>
             </div>
             <div class="stat-row">
-              <span class="stat-label">USB VID : PID</span>
+              <span class="stat-label" data-i18n="dash.vidpid">USB VID : PID</span>
               <span id="dash-vidpid" class="stat-value font-mono">0x3837 : 0x3033</span>
             </div>
             <div class="stat-row">
-              <span class="stat-label">Wireless Receiver</span>
+              <span class="stat-label" data-i18n="dash.receiver">Wireless Receiver</span>
               <span id="dash-dongle" class="stat-value font-mono">2.4G Dongle</span>
             </div>
             <div class="stat-row">
-              <span class="stat-label">Firmware Build Date</span>
+              <span class="stat-label" data-i18n="dash.buildDate">Firmware Build Date</span>
               <span id="dash-builddate" class="stat-value font-mono">Jan 12 2026, 20:41:47</span>
             </div>
             <div class="stat-row">
-              <span class="stat-label">Keyboard MCU Firmware</span>
+              <span class="stat-label" data-i18n="dash.mcu">Keyboard MCU Firmware</span>
               <span id="dash-fw" class="stat-value font-mono">1.14</span>
             </div>
             <div class="stat-row">
-              <span class="stat-label">RF Wireless Firmware</span>
+              <span class="stat-label" data-i18n="dash.rf">RF Wireless Firmware</span>
               <span id="dash-rffw" class="stat-value font-mono">1.30</span>
             </div>
           </div>
@@ -208,7 +212,7 @@
         <div class="dash-card">
           <div class="dash-card-header">
             <span class="card-icon"><svg class="line-icon"><use href="#i-battery"/></svg></span>
-            <h2>Battery & Power</h2>
+            <h2 data-i18n="dash.battery">Battery & Power</h2>
           </div>
           <div class="battery-display">
             <div class="battery-gauge-container">
@@ -219,15 +223,15 @@
               <span id="charging-badge" class="badge badge-subtle">Discharging</span>
             </div>
           </div>
-          <p class="card-note">Hardware battery telemetry</p>
+          <p class="card-note" data-i18n="dash.batteryNote">Hardware battery telemetry</p>
         </div>
 
         <div class="dash-card full-width">
           <div class="dash-card-header">
             <span class="card-icon"><svg class="line-icon"><use href="#i-box"/></svg></span>
-            <h2>Onboard profiles</h2>
+            <h2 data-i18n="dash.onboard">Onboard profiles</h2>
           </div>
-          <p class="subtitle">Profiles are listed on the left. Load for editing does not switch the keyboard; Activate on keyboard does.</p>
+          <p class="subtitle" data-i18n="dash.onboardNote">Profiles are listed on the left. Load for editing does not switch the keyboard; Activate on keyboard does.</p>
         </div>
       </div>
     </section>
@@ -236,27 +240,27 @@
     <section id="panel-keymap" class="view-panel" hidden>
       <div class="panel-header">
         <div>
-          <span class="eyebrow">KEY REMAPPING & LAYERS</span>
-          <h1>Key settings</h1>
-          <p class="subtitle">Four layers: Windows, Windows + Fn, macOS, macOS + Fn. Drag or click a command onto a key. Onboard edits save automatically; custom preview stays on this Mac.</p>
+          <span class="eyebrow" data-i18n="keymap.eyebrow">KEY REMAPPING & LAYERS</span>
+          <h1 data-i18n="keymap.title">Key settings</h1>
+          <p class="subtitle" data-i18n="keymap.subtitle">Four layers: Windows, Windows + Fn, macOS, macOS + Fn. Drag or click a command onto a key. Onboard edits save automatically; custom preview stays on this Mac.</p>
         </div>
         <div class="panel-header-actions">
           <p class="keymap-save-status" id="keymap-save-status" role="status" aria-live="polite"></p>
-          <button class="action-btn" data-action="read-layer">Read Layer from Device</button>
-          <button class="action-btn primary" id="btn-apply-keymap" data-action="apply-keymap" disabled>Apply Keymap to Keyboard</button>
+          <button class="action-btn" data-action="read-layer" data-i18n="keymap.read">Read Layer from Device</button>
+          <button class="action-btn primary" id="btn-apply-keymap" data-action="apply-keymap" disabled data-i18n="keymap.apply">Apply Keymap to Keyboard</button>
         </div>
       </div>
 
       <!-- Layer Tabs -->
       <div class="layer-selector-bar">
-        <span class="selector-label">Editing layer:</span>
+        <span class="selector-label" data-i18n="keymap.editingLayer">Editing layer:</span>
         <div class="button-toggle-group">
-          <button class="toggle-btn active" data-action="set-layer" data-layer="0">Layer 0 (Win Normal)</button>
-          <button class="toggle-btn" data-action="set-layer" data-layer="1">Layer 1 (Win + Fn)</button>
-          <button class="toggle-btn" data-action="set-layer" data-layer="2">Layer 2 (Mac Normal)</button>
-          <button class="toggle-btn" data-action="set-layer" data-layer="3">Layer 3 (Mac + Fn)</button>
+          <button class="toggle-btn active" data-action="set-layer" data-layer="0" data-i18n="keymap.layer0">Layer 0 (Win Normal)</button>
+          <button class="toggle-btn" data-action="set-layer" data-layer="1" data-i18n="keymap.layer1">Layer 1 (Win + Fn)</button>
+          <button class="toggle-btn" data-action="set-layer" data-layer="2" data-i18n="keymap.layer2">Layer 2 (Mac Normal)</button>
+          <button class="toggle-btn" data-action="set-layer" data-layer="3" data-i18n="keymap.layer3">Layer 3 (Mac + Fn)</button>
         </div>
-        <button class="action-btn danger-subtle" id="btn-restore-defaults" data-action="restore-defaults" disabled>Restore defaults</button>
+        <button class="action-btn danger-subtle" id="btn-restore-defaults" data-action="restore-defaults" disabled data-i18n="keymap.restore">Restore defaults</button>
       </div>
 
       <div class="keyboard-stage">
@@ -319,14 +323,14 @@
     <section id="panel-lighting" class="view-panel" hidden>
       <div class="panel-header">
         <div>
-          <span class="eyebrow">RGB ILLUMINATION</span>
-          <h1>Lighting & Backlight</h1>
-          <p class="subtitle">Built-in backlight effects, local static lighting, and the side indicator.</p>
+          <span class="eyebrow" data-i18n="light.eyebrow">RGB ILLUMINATION</span>
+          <h1 data-i18n="light.title">Lighting & Backlight</h1>
+          <p class="subtitle" data-i18n="light.subtitle">Built-in backlight effects, local static lighting, and the side indicator.</p>
         </div>
         <div class="panel-header-actions">
           <p class="lighting-save-status" id="lighting-save-status" role="status" aria-live="polite"></p>
           <button type="button" class="action-btn" id="btn-retry-lighting-save" data-action="retry-lighting-save" hidden>Retry</button>
-          <button class="action-btn" id="btn-read-lighting" data-action="read-lighting" disabled>Read from Device</button>
+          <button class="action-btn" id="btn-read-lighting" data-action="read-lighting" disabled data-i18n="light.read">Read from Device</button>
           <button class="action-btn primary" id="btn-apply-lighting" data-action="apply-lighting" hidden disabled>Apply Lighting to Device</button>
         </div>
       </div>
@@ -341,10 +345,10 @@
       <p class="field-hint lighting-zone-hint">83 lighting zones. The knob has no LED.</p>
 
       <div class="lighting-memory-pref" id="lighting-memory-pref">
-        <span class="lighting-memory-label">Remembered effects</span>
+        <span class="lighting-memory-label" data-i18n="light.remembered">Remembered effects</span>
         <div class="scope-tabs" role="radiogroup" aria-label="Where remembered lighting effects are stored">
-          <button type="button" class="scope-tab active" id="light-mem-keyboard" data-action="set-light-memory-fallback" data-fallback="hardware" aria-pressed="true">On keyboard</button>
-          <button type="button" class="scope-tab" id="light-mem-mac" data-action="set-light-memory-fallback" data-fallback="local" aria-pressed="false">This Mac</button>
+          <button type="button" class="scope-tab active" id="light-mem-keyboard" data-action="set-light-memory-fallback" data-fallback="hardware" aria-pressed="true" data-i18n="light.onKeyboard">On keyboard</button>
+          <button type="button" class="scope-tab" id="light-mem-mac" data-action="set-light-memory-fallback" data-fallback="local" aria-pressed="false" data-i18n="light.thisMac">This Mac</button>
         </div>
         <p class="field-hint" id="lighting-memory-hint">On the keyboard. A successful read does not prove writes.</p>
       </div>
@@ -352,16 +356,16 @@
       <div class="lighting-workspace">
         <section class="lighting-pane" id="lighting-pane-effects">
           <div class="lighting-pane-header">
-            <h2>Effects</h2>
+            <h2 data-i18n="light.effects">Effects</h2>
             <div class="scope-tabs" role="tablist" aria-label="Lighting scope">
-              <button type="button" class="scope-tab active" id="light-scope-main" data-action="set-light-scope" data-scope="main" role="tab" aria-selected="true">Main</button>
-              <button type="button" class="scope-tab" id="light-scope-side" data-action="set-light-scope" data-scope="side" role="tab" aria-selected="false">Side</button>
+              <button type="button" class="scope-tab active" id="light-scope-main" data-action="set-light-scope" data-scope="main" role="tab" aria-selected="true" data-i18n="light.main">Main</button>
+              <button type="button" class="scope-tab" id="light-scope-side" data-action="set-light-scope" data-scope="side" role="tab" aria-selected="false" data-i18n="light.side">Side</button>
             </div>
           </div>
           <div class="lighting-pane-body">
             <div class="scope-tabs lighting-main-tabs" id="lighting-main-tabs" role="tablist" aria-label="Main lighting library">
-              <button type="button" class="scope-tab active" id="light-main-tab-normal" data-action="set-main-light-tab" data-tab="normal" role="tab" aria-selected="true">Normal light</button>
-              <button type="button" class="scope-tab" id="btn-custom-lighting" data-action="set-main-light-tab" data-tab="local" role="tab" aria-selected="false" aria-pressed="false">Custom</button>
+              <button type="button" class="scope-tab active" id="light-main-tab-normal" data-action="set-main-light-tab" data-tab="normal" role="tab" aria-selected="true" data-i18n="light.normal">Normal light</button>
+              <button type="button" class="scope-tab" id="btn-custom-lighting" data-action="set-main-light-tab" data-tab="local" role="tab" aria-selected="false" aria-pressed="false" data-i18n="light.custom">Custom</button>
             </div>
             <p class="field-hint" id="custom-lighting-hint">Local custom lighting: static effects and animated GIF streaming. Cloud library is not in this build.</p>
             <p id="lighting-unrecognized" class="field-hint" hidden>Unrecognized lighting effect. The value from the keyboard is kept.</p>
@@ -776,9 +780,9 @@
     <section id="panel-settings" class="view-panel" hidden>
       <div class="panel-header">
         <div>
-          <span class="eyebrow">DEVICE PERFORMANCE</span>
-          <h1>Keyboard Settings</h1>
-          <p class="subtitle">Polling rate, sleep, Win lock, Mac mode, and key combo. Each control saves on its own.</p>
+          <span class="eyebrow" data-i18n="perf.eyebrow">DEVICE PERFORMANCE</span>
+          <h1 data-i18n="perf.title">Keyboard Settings</h1>
+          <p class="subtitle" data-i18n="perf.subtitle">Polling rate, sleep, Win lock, Mac mode, and key combo. Each control saves on its own.</p>
         </div>
         <div class="panel-header-actions">
           <p class="lighting-save-status" id="settings-save-status" role="status" aria-live="polite"></p>
@@ -793,7 +797,7 @@
           <div class="dash-card" data-performance-card="rate">
             <div class="dash-card-header">
               <span class="card-icon"><svg class="line-icon"><use href="#i-sliders"/></svg></span>
-              <h2>Polling Rate</h2>
+              <h2 data-i18n="perf.polling">Polling Rate</h2>
             </div>
             <fieldset id="setting-polling-rate" class="rate-radios">
               <legend class="sr-only">Polling rate</legend>
@@ -942,9 +946,9 @@
     <section id="panel-others" class="view-panel" hidden>
       <div class="panel-header">
         <div>
-          <span class="eyebrow">DEVICE MAINTENANCE</span>
-          <h1>Others</h1>
-          <p class="subtitle">Factory reset for the hardware-active profile or every onboard profile. Firmware update reviews a user-chosen official package; physical flash remains unproven.</p>
+          <span class="eyebrow" data-i18n="others.eyebrow">DEVICE MAINTENANCE</span>
+          <h1 data-i18n="others.title">Others</h1>
+          <p class="subtitle" data-i18n="others.subtitle">Factory reset for the hardware-active profile or every onboard profile. Firmware update reviews a user-chosen official package; physical flash remains unproven.</p>
         </div>
       </div>
 
@@ -952,7 +956,7 @@
         <div class="dash-card">
           <div class="dash-card-header">
             <span class="card-icon"><svg class="line-icon"><use href="#i-info"/></svg></span>
-            <h2>Firmware update</h2>
+            <h2 data-i18n="others.firmware">Firmware update</h2>
           </div>
           <p class="card-desc">Upgrade the keyboard only over USB, or the 2.4G receiver only while the dongle is connected. Choose a local official package; this app never downloads firmware. Review size, SHA-256, and boot identity, then confirm. Physical flash is unproven.</p>
           <div class="stats-list" style="margin-top: 12px;">
@@ -1281,6 +1285,7 @@
     </div>
   </div>
 
+  <script src="i18n.js"></script>
   <script src="macro-draft.js"></script>
   <script src="lighting-autosave.cjs"></script>
   <script src="performance-autosave.cjs"></script>

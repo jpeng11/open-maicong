@@ -54,6 +54,20 @@ async function run({ app, getWindow, getState }) {
   );
   assert.strictEqual(tabCount, 9, 'Must have 9 standalone feature tabs including Advanced and Others');
 
+  console.log('[Smoke] 2b. Verifying language toggle…');
+  await win.webContents.executeJavaScript('document.getElementById("lang-zh")?.click()');
+  await sleep(150);
+  const zhLighting = await win.webContents.executeJavaScript(
+    "document.querySelector('#tab-lighting .tab-label')?.textContent?.trim()"
+  );
+  assert.equal(zhLighting, '灯光');
+  await win.webContents.executeJavaScript('document.getElementById("lang-en")?.click()');
+  await sleep(150);
+  const enLighting = await win.webContents.executeJavaScript(
+    "document.querySelector('#tab-lighting .tab-label')?.textContent?.trim()"
+  );
+  assert.equal(enLighting, 'Lighting');
+
   // Step 3: Verify tabs navigation (Dashboard, Keymap, Lighting, Macros, Settings, Profiles, Guide)
   console.log('[Smoke] 3. Testing tab navigation in renderer…');
   const tabs = ['dashboard', 'keymap', 'lighting', 'macros', 'advanced', 'settings', 'profiles', 'others', 'guide'];

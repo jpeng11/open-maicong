@@ -25,6 +25,7 @@ const {
 } = require('./layout-g75v2.cjs');
 const advancedPlan = require('./advanced-plan.cjs');
 const { FirmwareSession } = require('./firmware-session.cjs');
+const i18n = require('./i18n.js');
 const { AppBindWatcher } = require('./profile-app-bind-watch.cjs');
 
 let win = null;
@@ -142,6 +143,40 @@ function createWindow() {
 }
 
 // IPC Handlers with Narrow Input Validation
+function localeFilePath() {
+  return path.join(app.getPath('userData'), 'locale.json');
+}
+
+function readStoredLocale() {
+  if (isDevHarness) return 'en';
+  try {
+    const raw = fs.readFileSync(localeFilePath(), 'utf8');
+    const parsed = JSON.parse(raw);
+    return i18n.normalizeLocale(parsed && parsed.locale);
+  } catch {
+    return i18n.DEFAULT_LOCALE;
+  }
+}
+
+function writeStoredLocale(locale) {
+  const next = i18n.normalizeLocale(locale);
+  fs.mkdirSync(app.getPath('userData'), { recursive: true });
+  fs.writeFileSync(localeFilePath(), JSON.stringify({ locale: next }), 'utf8');
+  return next;
+}
+
+ipcMain.handle('maicong:get-locale', () => {
+  const locale = i18n.getLocale();
+  return { success: true, locale };
+});
+
+ipcMain.handle('maicong:set-locale', (_event, locale) => {
+  const next = isDevHarness ? i18n.normalizeLocale(locale) : writeStoredLocale(locale);
+  i18n.setLocale(next);
+  setupAppMenu();
+  return { success: true, locale: next };
+});
+
 ipcMain.handle('maicong:get-state', () => {
   return getCompleteState();
 });
@@ -1187,12 +1222,12 @@ function setupAppMenu() {
       label: 'Maicong Studio',
       submenu: [
         {
-          label: 'About Maicong Studio',
+          label: i18n.t('menu.about'),
           click: () => {
             dialog.showMessageBox(win, {
-              title: 'About Maicong Studio',
-              message: 'Maicong Studio for macOS',
-              detail: `Version ${app.getVersion()}\nStandalone 100% offline configurator for MCHOSE G75 V2 keyboards.\nBuilt with verified GLW hardware protocol over native node-hid.`
+              title: i18n.t('menu.about'),
+              message: 'Maicong Studio',
+              detail: i18n.t('menu.aboutDetail', { version: app.getVersion() })
             });
           }
         },
@@ -1226,7 +1261,7 @@ function setupAppMenu() {
       role: 'help',
       submenu: [
         {
-          label: 'Capability Matrix & Guide',
+          label: i18n.t('menu.guide'),
           click: () => {
             if (win && !win.isDestroyed()) {
               win.webContents.send('maicong:navigate-tab', 'guide');
@@ -1251,6 +1286,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
+    i18n.setLocale(readStoredLocale());
     setupAppMenu();
 
     if (mockUiTest && !app.isPackaged) {

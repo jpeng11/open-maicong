@@ -241,6 +241,16 @@ async function run({ app, getWindow, getMock }) {
   );
   assert.strictEqual(tabCount, 9, 'nine feature tabs including Advanced and Others');
 
+  await win.webContents.executeJavaScript('document.getElementById("lang-zh")?.click()');
+  const zhTabs = await waitUntil((s) => s.tabLightingLabel === '灯光', 20, 50);
+  assert.equal(zhTabs.tabLightingLabel, '灯光');
+  assert.equal(zhTabs.tabOthersLabel, '其他');
+  assert.equal(zhTabs.localeZhActive, true);
+  await win.webContents.executeJavaScript('document.getElementById("lang-en")?.click()');
+  const enTabs = await waitUntil((s) => s.tabLightingLabel === 'Lighting', 20, 50);
+  assert.equal(enTabs.tabLightingLabel, 'Lighting');
+  assert.equal(enTabs.localeEnActive, true);
+
   await win.webContents.executeJavaScript(
     'document.querySelector(\'[data-action="set-tab"][data-tab="lighting"]\')?.click()'
   );

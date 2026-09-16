@@ -122,7 +122,31 @@ header.os-titlebar {
 .titlebar-actions {
   display: flex;
   gap: 8px;
+  align-items: center;
   -webkit-app-region: no-drag;
+}
+
+.lang-switch {
+  display: flex;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-card);
+}
+
+.lang-btn {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.lang-btn.active {
+  background: var(--theme-color);
+  color: #fff;
 }
 
 /* Outer hub row: 320px-class sidebar + white workspace */

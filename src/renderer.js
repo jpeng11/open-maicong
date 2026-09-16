@@ -4,6 +4,19 @@
  */
 
 const api = window.maicongApi;
+const I18n = window.MaicongI18n;
+
+function t(key, vars) {
+  return I18n && typeof I18n.t === 'function' ? I18n.t(key, vars) : (vars && vars.default) || key;
+}
+
+function refreshLocaleUi() {
+  if (I18n && typeof I18n.apply === 'function') I18n.apply(document);
+  renderEditTargetBar();
+  renderProfileLibrary();
+  if (typeof renderLightingControls === 'function') renderLightingControls();
+  if (typeof renderDashboard === 'function') renderDashboard();
+}
 const MacroDraft = window.MaicongMacroDraft;
 const LightingAutosave = window.MaicongLightingAutosave;
 const PerformanceAutosave = window.MaicongPerformanceAutosave;
@@ -476,6 +489,8 @@ document.addEventListener('click', async event => {
     }
     if (btn.dataset.tab !== 'keymap') haltKeyRecorder('tab-change');
     switchTab(btn.dataset.tab);
+  } else if (action === 'set-locale') {
+    await handleSetLocale(btn.dataset.locale);
   } else if (action === 'scan') {
     await scanHardware();
   } else if (action === 'refresh-status') {
@@ -989,13 +1004,13 @@ function updateFromDeviceState(devState) {
     els.connectionPill.title = fullId;
     if (state.needsReconnect) {
       els.connectionPill.className = 'connection-pill reconnecting';
-      els.deviceStatusText.textContent = 'Timeout';
+      els.deviceStatusText.textContent = t('status.timeout');
     } else if (state.connected && state.device) {
       els.connectionPill.className = 'connection-pill connected';
-      els.deviceStatusText.textContent = state.device.isReceiver ? '2.4 GHz' : 'USB';
+      els.deviceStatusText.textContent = state.device.isReceiver ? t('status.receiver') : t('status.usb');
     } else {
       els.connectionPill.className = 'connection-pill disconnected';
-      els.deviceStatusText.textContent = 'Offline';
+      els.deviceStatusText.textContent = t('status.offline');
     }
   }
 
@@ -1011,7 +1026,7 @@ function updateFromDeviceState(devState) {
 
   // Update top profile stat
   if (els.profileStatText) {
-    els.profileStatText.textContent = `HW ${state.activeProfile + 1} · Edit ${state.editingProfile + 1}`;
+    els.profileStatText.textContent = t('sidebar.hwEdit', { hw: state.activeProfile + 1, edit: state.editingProfile + 1 });
   }
 
   // Update Dashboard Tab
@@ -1056,7 +1071,7 @@ function renderDashboard() {
     } else {
       dashTransport.textContent = state.connected
         ? (state.device?.isReceiver ? '2.4GHz Wireless Receiver' : 'USB-C Cable')
-        : 'Not Connected';
+        : t('status.notConnected');
     }
   }
   if (dashVidPid) {
@@ -1162,20 +1177,20 @@ function renderProfileLibrary() {
         </div>
         <div class="profile-title">${escapeHtml(title)}</div>
         <p class="profile-desc">${enabled ? (bind
-          ? `Linked to ${escapeHtml(bind.displayName || bind.bundleId)}. This Mac activates this onboard profile when that app is frontmost.`
-          : 'Onboard profile. Load to edit without activating. Optionally link a game/app on this Mac.')
-          : 'Device supports 4 profiles; enable this one if it is not on yet.'}</p>
+          ? escapeHtml(t('profile.linkedTo', { name: bind.displayName || bind.bundleId }))
+          : t('profile.onboardDesc'))
+          : t('profile.notEnabledDesc')}</p>
         <div class="profile-card-actions">
-          <button class="action-btn select-profile-btn" data-action="switch-profile" data-profile="${i}" ${!enabled || isActive ? 'disabled' : ''}>${isActive ? 'Active' : (enabled ? 'Activate' : 'Not enabled')}</button>
-          ${enabled ? `<button class="action-btn" data-action="copy-onboard-local" data-profile="${i}">Copy</button>
-          <button class="action-btn" data-action="rename-profile" data-kind="keyboard" data-key="KeyboardProfile@keyboard@${i}" data-profile="${i}" data-name="${escapeAttr(onboardName(i))}">Rename</button>
-          <button class="action-btn" data-action="export-official-profile" data-kind="keyboard" data-profile="${i}">Export</button>
+          <button class="action-btn select-profile-btn" data-action="switch-profile" data-profile="${i}" ${!enabled || isActive ? 'disabled' : ''}>${isActive ? t('profile.active') : (enabled ? t('profile.activate') : t('profile.notEnabled'))}</button>
+          ${enabled ? `<button class="action-btn" data-action="copy-onboard-local" data-profile="${i}">${t('profile.copy')}</button>
+          <button class="action-btn" data-action="rename-profile" data-kind="keyboard" data-key="KeyboardProfile@keyboard@${i}" data-profile="${i}" data-name="${escapeAttr(onboardName(i))}">${t('profile.rename')}</button>
+          <button class="action-btn" data-action="export-official-profile" data-kind="keyboard" data-profile="${i}">${t('profile.export')}</button>
           ${bind
-            ? `<button class="action-btn" data-action="unbind-profile-app" data-profile="${i}">Unlink app</button>`
-            : `<button class="action-btn" data-action="bind-profile-app" data-profile="${i}">Link game/app…</button>`}` : ''}
-          ${enabled && count > 1 ? `<button class="action-btn" data-action="move-onboard-local" data-key="KeyboardProfile@keyboard@${i}">Move to custom</button>
-          <button class="action-btn" data-action="delete-onboard-profile" data-key="KeyboardProfile@keyboard@${i}">Delete</button>` : ''}
-          ${!enabled ? '<button class="action-btn" data-action="enable-fourth-profile">Enable 4th profile</button>' : ''}
+            ? `<button class="action-btn" data-action="unbind-profile-app" data-profile="${i}">${t('profile.unlinkApp')}</button>`
+            : `<button class="action-btn" data-action="bind-profile-app" data-profile="${i}">${t('profile.linkApp')}</button>`}` : ''}
+          ${enabled && count > 1 ? `<button class="action-btn" data-action="move-onboard-local" data-key="KeyboardProfile@keyboard@${i}">${t('profile.moveCustom')}</button>
+          <button class="action-btn" data-action="delete-onboard-profile" data-key="KeyboardProfile@keyboard@${i}">${t('profile.delete')}</button>` : ''}
+          ${!enabled ? `<button class="action-btn" data-action="enable-fourth-profile">${t('profile.enable4')}</button>` : ''}
         </div>`;
       attachOnboardDrop(card, `KeyboardProfile@keyboard@${i}`, enabled);
       onboardRoot.appendChild(card);
@@ -1201,13 +1216,13 @@ function renderProfileLibrary() {
           <span class="profile-tag"${preview ? '' : ' hidden'}>Preview</span>
         </div>
         <div class="profile-title">${escapeHtml(localizeProfileName(item.name))}</div>
-        <p class="profile-desc">Stored on this Mac. Drag onto onboard to write the keyboard.</p>
+        <p class="profile-desc">${t('profile.localDesc')}</p>
         <div class="profile-card-actions">
-          <button class="action-btn" data-action="load-local-preview" data-key="${escapeAttr(item.key)}">Load preview</button>
-          <button class="action-btn" data-action="move-local-onboard" data-key="${escapeAttr(item.key)}" data-activate="true">Move to onboard</button>
-          <button class="action-btn" data-action="rename-profile" data-kind="local" data-key="${escapeAttr(item.key)}" data-name="${escapeAttr(localizeProfileName(item.name))}">Rename</button>
-          <button class="action-btn" data-action="export-official-profile" data-kind="local" data-key="${escapeAttr(item.key)}">Export</button>
-          <button class="action-btn" data-action="delete-local-profile" data-key="${escapeAttr(item.key)}">Delete</button>
+          <button class="action-btn" data-action="load-local-preview" data-key="${escapeAttr(item.key)}">${t('profile.loadPreview')}</button>
+          <button class="action-btn" data-action="move-local-onboard" data-key="${escapeAttr(item.key)}" data-activate="true">${t('profile.moveOnboard')}</button>
+          <button class="action-btn" data-action="rename-profile" data-kind="local" data-key="${escapeAttr(item.key)}" data-name="${escapeAttr(localizeProfileName(item.name))}">${t('profile.rename')}</button>
+          <button class="action-btn" data-action="export-official-profile" data-kind="local" data-key="${escapeAttr(item.key)}">${t('profile.export')}</button>
+          <button class="action-btn" data-action="delete-local-profile" data-key="${escapeAttr(item.key)}">${t('profile.delete')}</button>
         </div>`;
       card.addEventListener('dragstart', (ev) => {
         ev.dataTransfer.setData('text/maicong-profile', item.key);
@@ -3430,14 +3445,20 @@ function fillEffectGrid(container, effects, selectedId, action, editable) {
       btn.className = 'effect-tile';
       btn.dataset.action = action;
       btn.dataset.effect = String(eff.id);
-      btn.textContent = eff.name;
+      btn.textContent = t(
+        action === 'select-side-effect' ? `effect.side.${eff.id}` : `effect.${eff.id}`,
+        { default: eff.name }
+      );
       container.append(btn);
     }
   } else {
     Array.from(container.children).forEach((btn, i) => {
       const eff = effects[i];
       btn.dataset.effect = String(eff.id);
-      btn.textContent = eff.name;
+      btn.textContent = t(
+        action === 'select-side-effect' ? `effect.side.${eff.id}` : `effect.${eff.id}`,
+        { default: eff.name }
+      );
     });
   }
   Array.from(container.children).forEach((btn) => {
@@ -7142,8 +7163,8 @@ function renderEditTargetBar() {
   const hw = document.getElementById('hardware-active-label');
   const ed = document.getElementById('editing-label');
   const sel = document.getElementById('edit-profile-select');
-  if (hw) hw.textContent = `Hardware active: Profile ${state.activeProfile + 1}`;
-  if (ed) ed.textContent = `Editing: Profile ${state.editingProfile + 1} · Layer ${state.activeLayer}`;
+  if (hw) hw.textContent = t('sidebar.hardwareActive', { n: state.activeProfile + 1 });
+  if (ed) ed.textContent = `${t('sidebar.editing', { n: state.editingProfile + 1 })} · Layer ${state.activeLayer}`;
   if (sel && String(sel.value) !== String(state.editingProfile)) {
     sel.value = String(state.editingProfile);
   }
@@ -8568,7 +8589,26 @@ function attachAdvancedListeners() {
 /**
  * Initialize application
  */
+async function handleSetLocale(locale) {
+  if (api.setLocale) {
+    const res = await api.setLocale(locale);
+    if (I18n && res && res.locale) I18n.setLocale(res.locale);
+  } else if (I18n) {
+    I18n.setLocale(locale);
+  }
+  refreshLocaleUi();
+}
+
 async function init() {
+  if (api.getLocale) {
+    try {
+      const loc = await api.getLocale();
+      if (I18n && loc && loc.locale) I18n.setLocale(loc.locale);
+    } catch {}
+  } else if (I18n) {
+    I18n.setLocale('zh');
+  }
+  if (I18n && typeof I18n.apply === 'function') I18n.apply(document);
   if (typeof api.isHarness === 'function') {
     try { state.harness = Boolean(await api.isHarness()); } catch { state.harness = false; }
   }
@@ -8932,6 +8972,10 @@ function editorSnapshot() {
     profileLibraryError: (state.profileLibrary && state.profileLibrary.error) || '',
     profileLibraryStatus: document.getElementById('profile-library-status')?.textContent || '',
     profileProgressHidden: Boolean(document.getElementById('profile-library-progress')?.hidden),
+    tabLightingLabel: document.querySelector('#tab-lighting .tab-label')?.textContent?.trim() || '',
+    tabOthersLabel: document.querySelector('#tab-others .tab-label')?.textContent?.trim() || '',
+    localeZhActive: Boolean(document.getElementById('lang-zh')?.classList.contains('active')),
+    localeEnActive: Boolean(document.getElementById('lang-en')?.classList.contains('active')),
     onboardTitles: Array.from(document.querySelectorAll('#onboard-profile-list .profile-title')).map((el) => el.textContent.trim()),
     onboardDescs: Array.from(document.querySelectorAll('#onboard-profile-list .profile-desc')).map((el) => el.textContent.trim()),
     appBindLabels: (state.appBinds || []).map((row) => `${row.profileIndex}:${row.bundleId}`),

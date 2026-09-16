@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('maicongApi', {
   getState: () => ipcRenderer.invoke('maicong:get-state'),
+  getLocale: () => ipcRenderer.invoke('maicong:get-locale'),
+  setLocale: (locale) => ipcRenderer.invoke('maicong:set-locale', locale),
   getLayout: () => ipcRenderer.invoke('maicong:get-layout'),
   scan: () => ipcRenderer.invoke('maicong:scan'),
   connect: (targetPath) => ipcRenderer.invoke('maicong:connect', targetPath),
