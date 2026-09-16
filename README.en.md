@@ -20,6 +20,7 @@ Local control of the G75 V2 mechanical hub surface:
 | Profiles | 4 onboard slots, Activate vs Load-for-edit, local library cap 20, official KeyboardProfile v3 import/export |
 | Others | Factory reset (active onboard vs all), firmware update from a user-chosen official package (size + SHA-256) |
 | App auto-bind | Link an onboard profile to a Mac app; the slot activates when that app is frontmost |
+| Language | Title-bar **中文 / EN**. Defaults to Chinese and remembers the choice |
 
 Magnetic-only hub features (Rapid Trigger, DKS, travel calibration, and so on) are not part of G75 V2 mechanical and are not offered here.
 
@@ -69,10 +70,11 @@ If the project path contains a space (for example a volume named `Extreme SSD`),
 ## How to use it
 
 1. Plug in the 2.4 GHz receiver or USB-C and open the app. The sidebar should show connected.
-2. **Load for editing** only fills the editor. **Activate** is what the keyboard actually uses.
-3. Lighting and key edits autosave to the current edit target. Activate, enable the 4th profile, factory reset, and firmware update still need an explicit click.
-4. Firmware: keyboard MCU in wired USB only; receiver RF in 2.4G only. Choose a local official `.bin`, review catalog size and hash, then confirm. Cancel sends no erase packets.
-5. App auto-bind lives on Backup-tab onboard cards: link a `.app`; when it is frontmost this Mac activates that onboard slot.
+2. Switch **中文 / EN** in the title bar. Everyday launches default to Chinese; the choice is stored on this Mac.
+3. **Load for editing** only fills the editor. **Activate** is what the keyboard actually uses.
+4. Lighting and key edits autosave to the current edit target. Activate, enable the 4th profile, factory reset, and firmware update still need an explicit click.
+5. Firmware: keyboard MCU in wired USB only; receiver RF in 2.4G only. Choose a local official `.bin`, review catalog size and hash, then confirm. Cancel sends no erase packets.
+6. App auto-bind lives on Backup-tab onboard cards: link a `.app`; when it is frontmost this Mac activates that onboard slot.
 
 ## Safety and honesty
 
