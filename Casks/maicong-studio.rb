@@ -4,7 +4,7 @@ cask "maicong-studio" do
 
   url "https://github.com/jpeng11/open-maicong/releases/download/v#{version}/Maicong-Studio-#{version}-arm64.dmg"
   name "Maicong Studio"
-  desc "Unofficial offline macOS hub for the MCHOSE G75 V2 mechanical keyboard"
+  desc "Unofficial offline hub for the MCHOSE G75 V2 mechanical keyboard"
   homepage "https://github.com/jpeng11/open-maicong"
 
   livecheck do
@@ -12,8 +12,8 @@ cask "maicong-studio" do
     strategy :github_latest
   end
 
-  depends_on macos: :ventura
   depends_on arch: :arm64
+  depends_on macos: :ventura
 
   app "Maicong Studio.app"
 
