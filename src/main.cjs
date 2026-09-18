@@ -39,6 +39,7 @@ let appBindWatcher = null;
 const smoke = process.argv.includes('--smoke-test');
 const mockUiTest = process.argv.includes('--mock-ui-test');
 const isDevHarness = (smoke || mockUiTest) && !app.isPackaged;
+const isDev = !app.isPackaged && !smoke && !mockUiTest;
 if (smoke || mockUiTest) {
   app.setPath('userData', path.join(app.getPath('temp'), `maicong-harness-${process.pid}`));
 }
@@ -173,6 +174,41 @@ function createWindow() {
       void shell.openExternal(url);
     }
   });
+
+  if (isDev) {
+    console.log('[Dev] Running in live development mode. Auto-reloading on src/ changes.');
+    win.webContents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown') return;
+      if ((input.key.toLowerCase() === 'r' && (input.meta || input.control)) || input.key === 'F5') {
+        event.preventDefault();
+        win.webContents.reload();
+      }
+      if ((input.key.toLowerCase() === 'i' && (input.meta || input.control) && input.alt) || input.key === 'F12') {
+        event.preventDefault();
+        win.webContents.toggleDevTools();
+      }
+    });
+
+    let reloadTimer = null;
+    try {
+      const watcher = fs.watch(__dirname, { recursive: true }, (_eventType, filename) => {
+        if (!filename) return;
+        if (!filename.endsWith('.js') && !filename.endsWith('.cjs') && !filename.endsWith('.html') && !filename.endsWith('.css')) return;
+        clearTimeout(reloadTimer);
+        reloadTimer = setTimeout(() => {
+          if (win && !win.isDestroyed()) {
+            console.log(`[Dev] Live reload triggered by change in ${filename}`);
+            win.webContents.reload();
+          }
+        }, 150);
+      });
+      win.on('closed', () => {
+        watcher.close();
+      });
+    } catch (err) {
+      console.warn('[Dev] File watcher could not be started:', err.message);
+    }
+  }
 
   if (isDevHarness) {
     win.webContents.on('console-message', (details) => {
