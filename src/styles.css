@@ -1375,6 +1375,27 @@ button.kb-key.compact-label .key-label {
   opacity: 0.85;
 }
 
+html:lang(zh) .key-label[data-display],
+html[lang^="zh"] .key-label[data-display] {
+  font-size: 0 !important;
+}
+
+html:lang(zh) .key-label[data-display]::after,
+html[lang^="zh"] .key-label[data-display]::after {
+  content: attr(data-display);
+  font-size: 8px;
+  line-height: 1;
+  display: block;
+  opacity: 0.9;
+  text-align: center;
+}
+
+html:lang(zh) .kb-key.compact-label .key-label[data-display]::after,
+html[lang^="zh"] .kb-key.compact-label .key-label[data-display]::after {
+  font-size: 7px;
+  letter-spacing: -0.2px;
+}
+
 #inspector-key-box {
   display: flex;
   flex-direction: column;
@@ -1390,6 +1411,20 @@ button.kb-key.compact-label .key-label {
   font-weight: 700;
   margin-bottom: 2px;
   color: var(--theme-color);
+}
+
+html:lang(zh) #inspector-key-box[data-display],
+html[lang^="zh"] #inspector-key-box[data-display] {
+  font-size: 0 !important;
+}
+
+html:lang(zh) #inspector-key-box[data-display]::after,
+html[lang^="zh"] #inspector-key-box[data-display]::after {
+  content: attr(data-display);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  display: block;
 }
 
 .key-color-dot {
@@ -1918,9 +1953,23 @@ button.kb-key.compact-label .key-label {
   color: #fff;
 }
 
+html:lang(zh) .palette-cat-btn[data-display],
+html[lang^="zh"] .palette-cat-btn[data-display] {
+  font-size: 0 !important;
+}
+
+html:lang(zh) .palette-cat-btn[data-display]::after,
+html[lang^="zh"] .palette-cat-btn[data-display]::after {
+  content: attr(data-display);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  display: inline-block;
+}
+
 .palette-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(74px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
   gap: 7px;
   max-height: 220px;
   overflow-y: auto;
@@ -1959,6 +2008,27 @@ button.kb-key.compact-label .key-label {
   font-weight: 600;
   color: var(--text-primary);
   text-align: center;
+}
+
+html:lang(zh) .palette-key-btn[data-display],
+html[lang^="zh"] .palette-key-btn[data-display] {
+  font-size: 0 !important;
+}
+
+html:lang(zh) .palette-key-btn[data-display]::after,
+html[lang^="zh"] .palette-key-btn[data-display]::after {
+  content: attr(data-display);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text-primary);
+  display: block;
+  text-align: center;
+}
+
+html:lang(zh) .palette-key-btn:hover[data-display]::after,
+html[lang^="zh"] .palette-key-btn:hover[data-display]::after {
+  color: var(--theme-color);
 }
 
 .palette-key-btn:hover {

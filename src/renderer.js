@@ -14,6 +14,11 @@ function localizePaletteCategory(cat) {
   const keys = {
     Macros: 'palette.macros',
     Basic: 'palette.basic',
+    Mouse: 'palette.mouse',
+    Media: 'palette.media',
+    'Main Lighting': 'palette.lightingMain',
+    'Side Lighting': 'palette.lightingSide',
+    Extended: 'palette.extended',
     Lighting: 'palette.lighting',
     'Media & Audio': 'palette.media',
     'Extended Func': 'palette.extended',
@@ -2083,41 +2088,219 @@ function isMacConfig() {
   return false;
 }
 
+const PALETTE_ZH_LABELS = {
+  // Mouse
+  'Left mouse button': '鼠标左键',
+  'Right mouse button': '鼠标右键',
+  'Middle mouse button': '鼠标中键',
+  'Mouse forward': '鼠标前进',
+  'Mouse backward': '鼠标后退',
+  'Forward button': '鼠标前进',
+  'Back button': '鼠标后退',
+  'Wheel up': '滚轮向上',
+  'Wheel down': '滚轮向下',
+
+  // Media
+  'Play / Pause': '播放/暂停',
+  'Play/Pause': '播放/暂停',
+  'Mute': '静音',
+  'Stop': '停止',
+  'Prev Track': '上一曲',
+  'Previous Track': '上一曲',
+  'Next Track': '下一曲',
+  'Volume Up': '音量加',
+  'Volume Down': '音量减',
+  'Volume +': '音量加',
+  'Volume -': '音量减',
+  'Fast Forward': '快进',
+  'Rewind': '快退',
+
+  // Lighting - Main
+  'Backlight Mode Switch→': '灯效模式+',
+  'Backlight Mode Switch←': '灯效模式-',
+  'Backlight brightness +': '背光亮度+',
+  'Backlight brightness -': '背光亮度-',
+  'Backlight speed +': '背光速度+',
+  'Backlight speed -': '背光速度-',
+  'Switch backlight color→': '背光颜色+',
+  'Switch backlight color←': '背光颜色-',
+  'Toggle keyboard backlight': '背光开关',
+  'Switch lighting effect': '切换灯效',
+  'Switch lighting color': '切换颜色',
+
+  // Lighting - Side
+  'Switch indicator mode': '侧灯模式',
+  'Indicator brightness +': '侧灯亮度+',
+  'Indicator brightness -': '侧灯亮度-',
+  'Indicator speed +': '侧灯速度+',
+  'Indicator speed -': '侧灯速度-',
+  'Indicator Speed Switch': '侧灯速度切换',
+  'Switch indicator color': '侧灯颜色',
+  'Indicator On/Off': '侧灯开关',
+
+  // System & Shortcuts (Windows & Mac)
+  'Zoom out': '缩小',
+  'Zoom in': '放大',
+  'Reset': '重置',
+  'Restore': '还原',
+  'Undo': '撤销',
+  'Redo': '重做',
+  'Select all': '全选',
+  'Create': '新建',
+  'Copy': '复制',
+  'Cut': '剪切',
+  'Paste': '粘贴',
+  'Save': '保存',
+  'Open': '打开',
+  'New Item': '新建项目',
+  'Close item': '关闭项目',
+  'Back (keyboard)': '后退',
+  'Forward (keyboard)': '前进',
+  'switch window': '切换窗口',
+  'Show desktop': '显示桌面',
+  'Open navigation': '打开导航',
+  'Cycle taskbar Apps': '任务栏轮询',
+  'Action center': '操作中心',
+  'File Explorer': '文件资源管理器',
+  'Windows settings center': '系统设置',
+  'Lock computer': '锁定计算机',
+  'Cast screen to other devices': '投屏',
+  'Jump to tray': '跳转托盘',
+  'Start Xbox game bar': 'Xbox游戏栏',
+  'Run': '运行',
+  'Search': '搜索',
+  'Display settings': '显示设置',
+  'Simple menu': '快捷菜单',
+  'Emoji box': '表情符号',
+  'Start menu': '开始菜单',
+  'Taskbar': '任务栏',
+  'Close window': '关闭窗口',
+  'Switch to next App': '切换下一应用',
+  'Browser homepage': '浏览器主页',
+  'Calculator': '计算器',
+  'Mail': '邮件',
+  'My computer': '我的电脑',
+  'Favorites': '收藏夹',
+  'Windows security screen': '安全中心',
+  'Task Manager': '任务管理器',
+  'Screen brightness +': '屏幕亮度+',
+  'Screen brightness -': '屏幕亮度-',
+  'Search (Web)': '网页搜索',
+  'Refresh (web page)': '刷新网页',
+
+  // Mac Shortcuts
+  'Actual Size': '实际大小',
+  'New file/window': '新建文件/窗口',
+  'Open file': '打开文件',
+  'Close current tab/window': '关闭标签/窗口',
+  'Go back/up one level': '返回上一层',
+  'Go to next page': '前往下一页',
+  'Show/hide Dock': '显示/隐藏程序坞',
+  'VoiceOver': '旁白/语音',
+  'Open Finder': '打开访达',
+  'Lock screen': '锁定屏幕',
+  'Emoji & Symbols': '表情与符号',
+  'Mission Control': '调度中心',
+  'Launchpad': '启动台',
+  'Siri': 'Siri',
+  'Spotlight': '聚焦搜索',
+  'Go to home directory': '个人主目录',
+  'Show bookmarks (Safari)': '显示书签',
+  'Force Quit': '强制退出',
+  'Find/Address Bar': '地址栏查找',
+
+  // Special Keys
+  'Switch Profile': '切换配置',
+  'Clear': '清除',
+  'Disabled': '禁用',
+  'FN Layer': 'FN键',
+
+  // Basic Keyboard Keys
+  'Backspace': '退格',
+  'Tab': '制表',
+  'Caps': '大写',
+  'Caps Lock': '大写锁定',
+  'Enter': '回车',
+  'Shift': 'Shift',
+  'Left Shift': '左Shift',
+  'Right Shift': '右Shift',
+  'Ctrl': 'Ctrl',
+  'Left Ctrl': '左Ctrl',
+  'Right Ctrl': '右Ctrl',
+  'Win': 'Win',
+  'Left GUI / Win': 'Win',
+  'Right GUI / Win': 'Win',
+  'Alt': 'Alt',
+  'Left Alt / Option': 'Option',
+  'Right Alt / Option': 'Option',
+  'Space': '空格',
+  'Esc': 'Esc',
+  'Escape': 'Esc',
+  'Delete': '删除',
+  'Insert': '插入',
+  'Home': 'Home',
+  'End': 'End',
+  'PgUp': '上一页',
+  'Page Up': '上一页',
+  'PgDn': '下一页',
+  'Page Down': '下一页',
+  'Up Arrow': '方向键上',
+  'Down Arrow': '方向键下',
+  'Left Arrow': '方向键左',
+  'Right Arrow': '方向键右',
+  'Print Screen': '截屏',
+  'Scroll Lock': '滚屏锁定',
+  'Pause': '暂停',
+  'Num Lock': '数字锁定'
+};
+
 const PALETTE_BUTTON_ICONS = {
   // Mouse
   'Left mouse button': '◧',
   'Right mouse button': '◨',
   'Middle mouse button': '◫',
+  'Mouse forward': '➔',
+  'Mouse backward': '⬅',
   'Forward button': '➔',
   'Back button': '⬅',
   'Wheel up': '▲',
   'Wheel down': '▼',
 
   // Media
-  'Mute': '🔇',
-  'Volume +': '🔊',
-  'Volume -': '🔉',
   'Play / Pause': '⏯',
   'Play/Pause': '⏯',
+  'Mute': '🔇',
+  'Stop': '⏹',
+  'Prev Track': '⏮',
   'Previous Track': '⏮',
   'Next Track': '⏭',
-  'Stop': '⏹',
+  'Volume Up': '🔊',
+  'Volume Down': '🔉',
+  'Volume +': '🔊',
+  'Volume -': '🔉',
   'Fast Forward': '⏩',
   'Rewind': '⏪',
 
-  // Lighting
-  'Toggle keyboard backlight': '💡',
+  // Main Lighting
+  'Backlight Mode Switch→': '🚥→',
+  'Backlight Mode Switch←': '←🚥',
   'Backlight brightness +': '🔆',
   'Backlight brightness -': '🔅',
   'Backlight speed +': '⚡+',
   'Backlight speed -': '⚡-',
+  'Switch backlight color→': '🎨→',
+  'Switch backlight color←': '←🎨',
+  'Toggle keyboard backlight': '💡',
   'Switch lighting effect': '🌈',
   'Switch lighting color': '🎨',
+
+  // Side Lighting
   'Switch indicator mode': '🚥',
-  'Indicator brightness +': '🚥+',
-  'Indicator brightness -': '🚥-',
+  'Indicator brightness +': '💡+',
+  'Indicator brightness -': '💡-',
   'Indicator speed +': '⚡+',
   'Indicator speed -': '⚡-',
+  'Indicator Speed Switch': '⚡',
   'Switch indicator color': '🎨',
   'Indicator On/Off': '💡',
 
@@ -2127,14 +2310,19 @@ const PALETTE_BUTTON_ICONS = {
   'Mission Control': '⊞',
   'Launchpad': '㗊',
   'VoiceOver': '🎙',
+  'Siri': '🎙',
+  'Spotlight': '🔍',
   'Search': '🔍',
-  'Search (Web)': '🔍',
+  'Search (Web)': '🌐',
   'Refresh (web page)': '🔄',
-  'Emoji & Symbols': '🌐',
+  'Emoji & Symbols': '😀',
+  'Emoji box': '😀',
   'Lock screen': '🔒',
+  'Lock computer': '🔒',
   'Force Quit': '⌥⌘⎋',
   'Show/hide Dock': '⌥⌘D',
   'switch window': '⌘⇥',
+  'Switch to next App': '⌘⇥',
   'Open Finder': '⌥⌘␣',
   'Show bookmarks (Safari)': '⌥⌘B',
   'Find/Address Bar': '⌘L',
@@ -2145,22 +2333,47 @@ const PALETTE_BUTTON_ICONS = {
   'Undo': '⌘Z',
   'Redo': '⇧⌘Z',
   'Copy': '⌘C',
+  'Cut': '⌘X',
   'Paste': '⌘V',
-  'Action center': '⌘A',
-  'Close current tab/window': '⌘W',
-  'New file/window': '⌘N',
-  'Browser homepage': '⌘H',
+  'Select all': '⌘A',
+  'Save': '⌘S',
+  'Open': '⌘O',
   'Open file': '⌘O',
-  'Cycle taskbar Apps': '⌘⇥',
-  'Go back/up one level': '⌘[',
-  'Go to next page': '⌘]',
-  'Run': '⌘R',
-  'Switch Profile': '⟳',
-  'Clear': '⌧',
-  'Windows security screen': '🛡️',
-  'Task Manager': '📊',
+  'New Item': '⌘N',
+  'Create': '⌘N',
+  'New file/window': '⌘N',
+  'Close item': '⌘W',
+  'Close current tab/window': '⌘W',
+  'Close window': '✕',
+  'Action center': '🔔',
+  'File Explorer': '📁',
+  'Windows settings center': '⚙️',
+  'Cast screen to other devices': '📺',
+  'Jump to tray': '📥',
+  'Start Xbox game bar': '🎮',
+  'Run': '▶',
+  'Display settings': '🖥️',
+  'Simple menu': '☰',
+  'Start menu': '🪟',
+  'Taskbar': '📋',
+  'Browser homepage': '🏠',
+  'Calculator': '🧮',
+  'Mail': '✉️',
   'My computer': '💻',
   'Favorites': '⭐',
+  'Windows security screen': '🛡️',
+  'Task Manager': '📊',
+  'Show desktop': '🖥️',
+  'Open navigation': '🧭',
+  'Cycle taskbar Apps': '⌘⇥',
+  'Back (keyboard)': '←',
+  'Forward (keyboard)': '→',
+  'Go back/up one level': '⌘[',
+  'Go to next page': '⌘]',
+  'Switch Profile': '⟳',
+  'Clear': '⌧',
+  'Disabled': '🚫',
+  'FN Layer': 'Fn',
 
   // Basic Modifiers & Keys
   'Left GUI / Win': '⌘',
@@ -2172,6 +2385,7 @@ const PALETTE_BUTTON_ICONS = {
   'Left Shift': '⇧',
   'Right Shift': '⇧',
   'Caps Lock': '⇪',
+  'Caps': '⇪',
   'Backspace': '⌫',
   'Enter': '⏎',
   'Tab': '⇥',
@@ -2189,8 +2403,15 @@ const PALETTE_BUTTON_ICONS = {
   '→': '→',
   'Page Up': '⇞',
   'Page Down': '⇟',
+  'PgUp': '⇞',
+  'PgDn': '⇟',
   'Home': '↖',
-  'End': '↘'
+  'End': '↘',
+  'Print Screen': '📷',
+  'Scroll Lock': '📜',
+  'Pause': '⏸',
+  'Insert': '⎀',
+  'Num Lock': '🔢'
 };
 
 function getMacKeyIcon(key, assigned, rawLabel) {
@@ -2215,9 +2436,9 @@ function getMacKeyIcon(key, assigned, rawLabel) {
   }
 
   if (key) {
-    if (key.id === 'k_lwin') return '⌥';
-    if (key.id === 'k_lalt') return '⌘';
-    if (state.activeLayer === 2) {
+    if (key.id === 'k_lwin' || key.id === 'k_rwin') return '⌥';
+    if (key.id === 'k_lalt' || key.id === 'k_ralt') return '⌘';
+    if (state.activeLayer === 2 || state.activeLayer === 3) {
       if (key.id === 'k_f1') return '🔅';
       if (key.id === 'k_f2') return '🔆';
       if (key.id === 'k_f3') return '⊞';
@@ -2236,7 +2457,7 @@ function getMacKeyIcon(key, assigned, rawLabel) {
     if (key.id === 'k_caps') return '⇪';
     if (key.id === 'k_enter') return '⏎';
     if (key.id === 'k_lshift' || key.id === 'k_rshift') return '⇧';
-    if (key.id === 'k_backspace') return '⌫';
+    if (key.id === 'k_bsp' || key.id === 'k_backspace') return '⌫';
     if (key.id === 'k_del') return '⌦';
     if (key.id === 'k_lctrl' || key.id === 'k_rctrl') return '⌃';
     if (key.id === 'k_space') return '␣';
@@ -2255,7 +2476,7 @@ function getMacKeyIcon(key, assigned, rawLabel) {
 
 function getPaletteIcon(item) {
   if (!item || !item.label) return null;
-  if (item.label === 'FN Layer') return null;
+  if (item.label === 'FN Layer') return 'Fn';
   if (PALETTE_BUTTON_ICONS[item.label]) return PALETTE_BUTTON_ICONS[item.label];
 
   if (item.type === 16) {
@@ -2288,11 +2509,15 @@ function patchKeyButton(keyEl, key, isLightingMode) {
     if (labelSpan && labelSpan.textContent !== '') labelSpan.textContent = '';
     keyEl.title = t('layout.knobTitle', { default: 'Rotary Knob (Slot 37)' });
     delete keyEl.dataset.icon;
+    delete keyEl.dataset.display;
+    if (labelSpan) delete labelSpan.dataset.display;
   } else {
     if (labelSpan && labelSpan.textContent !== label) labelSpan.textContent = label;
     const isMac = !isLightingMode && isMacConfig();
     const assigned = !isLightingMode ? state.layerKeymaps[state.activeLayer]?.[key.slot] : null;
-    const icon = isMac ? getMacKeyIcon(key, assigned, label) : null;
+    const icon = isMac
+      ? getMacKeyIcon(key, assigned, label)
+      : (assigned && PALETTE_BUTTON_ICONS[assigned.label || label] ? PALETTE_BUTTON_ICONS[assigned.label || label] : null);
     if (icon) {
       keyEl.dataset.icon = icon;
       keyEl.classList.add('mac-icon-key');
@@ -2300,7 +2525,15 @@ function patchKeyButton(keyEl, key, isLightingMode) {
       delete keyEl.dataset.icon;
       keyEl.classList.remove('mac-icon-key');
     }
-    keyEl.classList.toggle('compact-label', Boolean(icon || (label && label.length >= 5)));
+    const zhDisplay = PALETTE_ZH_LABELS[label];
+    if (zhDisplay) {
+      keyEl.dataset.display = zhDisplay;
+      if (labelSpan) labelSpan.dataset.display = zhDisplay;
+    } else {
+      delete keyEl.dataset.display;
+      if (labelSpan) delete labelSpan.dataset.display;
+    }
+    keyEl.classList.toggle('compact-label', Boolean(icon || (label && label.length >= 5) || (zhDisplay && zhDisplay.length >= 4)));
   }
   let dot = keyEl.querySelector('.key-color-dot');
   if (hasColor && !isLightingMode) {
@@ -2399,7 +2632,9 @@ function selectKey(key) {
   }
   const customColor = state.stagedKeyColors[key.slot];
   const isMac = isMacConfig();
-  const icon = isMac ? getMacKeyIcon(key, assigned, displayLabel) : null;
+  const icon = isMac
+    ? getMacKeyIcon(key, assigned, displayLabel)
+    : (assigned && PALETTE_BUTTON_ICONS[assigned.label || displayLabel] ? PALETTE_BUTTON_ICONS[assigned.label || displayLabel] : (PALETTE_BUTTON_ICONS[displayLabel] || null));
 
   if (box) {
     box.textContent = displayLabel;
@@ -2407,6 +2642,12 @@ function selectKey(key) {
       box.dataset.icon = icon;
     } else {
       delete box.dataset.icon;
+    }
+    const zhDisplay = PALETTE_ZH_LABELS[displayLabel];
+    if (zhDisplay) {
+      box.dataset.display = zhDisplay;
+    } else {
+      delete box.dataset.display;
     }
     if (customColor && customColor !== '#000000') {
       box.style.borderColor = customColor;
@@ -2418,7 +2659,9 @@ function selectKey(key) {
   }
 
   if (nameEl) {
-    nameEl.textContent = key.name + (key.isKnob ? t('keymap.rotaryKnob') : '');
+    const isZh = I18n && typeof I18n.getLocale === 'function' && I18n.getLocale() === 'zh';
+    const keyNameZh = isZh && PALETTE_ZH_LABELS[key.name] ? PALETTE_ZH_LABELS[key.name] : key.name;
+    nameEl.textContent = keyNameZh + (key.isKnob ? t('keymap.rotaryKnob') : '');
   }
   if (infoEl) {
     infoEl.textContent = key.isKnob
@@ -2427,15 +2670,17 @@ function selectKey(key) {
   }
   if (assignedEl) {
     if (assigned) {
+      const isZh = I18n && typeof I18n.getLocale === 'function' && I18n.getLocale() === 'zh';
+      const assignedLabelZh = (isZh && PALETTE_ZH_LABELS[assigned.label]) ? PALETTE_ZH_LABELS[assigned.label] : assigned.label;
       if (assigned.type === 112) {
         const modeLabel = assigned.code2 === 1
           ? t('keymap.playOnce')
           : (assigned.code2 === 255 ? t('keymap.toggleRepeat') : t('keymap.repeatHeld'));
         assignedEl.textContent = t('keymap.assignedMacro', { n: assigned.code1 + 1, mode: modeLabel });
       } else if (assigned.type === 16 && assigned.code1 > 0) {
-        assignedEl.textContent = t('keymap.assignedChord', { label: assigned.label });
+        assignedEl.textContent = t('keymap.assignedChord', { label: assignedLabelZh });
       } else {
-        assignedEl.textContent = t('keymap.assignedKey', { label: assigned.label, code: assigned.code || assigned.code2 });
+        assignedEl.textContent = t('keymap.assignedKey', { label: assignedLabelZh, code: assigned.code || assigned.code2 });
       }
     } else {
       assignedEl.textContent = t('keymap.defaultMapping');
@@ -2515,8 +2760,10 @@ function renderPalette() {
   for (const cat of categories) {
     const tabBtn = document.createElement('button');
     tabBtn.className = `palette-cat-btn ${cat === state.paletteCategory ? 'active' : ''}`;
-    tabBtn.textContent = localizePaletteCategory(cat);
+    tabBtn.textContent = cat;
     tabBtn.dataset.category = cat;
+    tabBtn.dataset.display = localizePaletteCategory(cat);
+    tabBtn.title = localizePaletteCategory(cat);
     tabBtn.addEventListener('click', () => {
       state.paletteCategory = cat;
       renderPalette();
@@ -2530,13 +2777,15 @@ function renderPalette() {
     for (let i = 0; i < 16; i++) {
       const slot = state.stagedMacros[i] || { type: 0 };
       const mBtn = document.createElement('button');
-      mBtn.className = 'palette-key-btn';
+      mBtn.className = 'palette-key-btn has-icon';
       mBtn.textContent = `M${i + 1}`;
       mBtn.title = t('palette.macroTitle', { n: i + 1, type: slot.type || 0 });
       mBtn.dataset.type = '112';
       mBtn.dataset.code1 = String(i);
       mBtn.dataset.code2 = String(slot.type || 0);
       mBtn.dataset.label = `M${i + 1}`;
+      mBtn.dataset.icon = '⚡';
+      mBtn.dataset.display = `M${i + 1}`;
       mBtn.addEventListener('click', () => {
         assignMacroToSelected(i);
       });
@@ -2551,7 +2800,6 @@ function renderPalette() {
     const keyBtn = document.createElement('button');
     keyBtn.className = 'palette-key-btn';
     keyBtn.textContent = item.label;
-    keyBtn.title = `${item.label} (Code: ${item.code})`;
 
     const bType = item.type !== undefined ? item.type : (item.code === 0 ? 0 : 16);
     const bCode1 = item.code1 !== undefined ? item.code1 : (item.code >= 224 && item.code <= 231 ? (1 << (item.code - 224)) : 0);
@@ -2561,6 +2809,14 @@ function renderPalette() {
     keyBtn.dataset.code1 = String(bCode1);
     keyBtn.dataset.code2 = String(bCode2);
     keyBtn.dataset.label = item.label;
+
+    const zhLabel = PALETTE_ZH_LABELS[item.label];
+    if (zhLabel) {
+      keyBtn.dataset.display = zhLabel;
+      keyBtn.title = `${zhLabel} (${item.label}, Code: ${item.code})`;
+    } else {
+      keyBtn.title = `${item.label} (Code: ${item.code})`;
+    }
 
     const icon = getPaletteIcon(item);
     if (icon) {
