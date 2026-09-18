@@ -1969,7 +1969,13 @@ function patchKeyButton(keyEl, key, isLightingMode) {
   const label = isLightingMode
     ? key.name
     : (state.layerKeymaps[state.activeLayer]?.[key.slot]?.label || key.name);
-  if (labelSpan && labelSpan.textContent !== label) labelSpan.textContent = label;
+  if (key.isKnob) {
+    if (labelSpan && labelSpan.textContent !== '') labelSpan.textContent = '';
+    keyEl.title = t('layout.knobTitle', { default: 'Rotary Knob (Slot 37)' });
+  } else {
+    if (labelSpan && labelSpan.textContent !== label) labelSpan.textContent = label;
+    keyEl.classList.toggle('compact-label', Boolean(label && label.length >= 5));
+  }
   let dot = keyEl.querySelector('.key-color-dot');
   if (hasColor && !isLightingMode) {
     if (!dot) {
