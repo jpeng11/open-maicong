@@ -2032,6 +2032,196 @@ function buildKeyButton(key, idPrefix) {
   return keyEl;
 }
 
+function isMacConfig() {
+  if (state.activeLayer === 2 || state.activeLayer === 3) return true;
+  if (state.settings && ((state.settings.macMode & 3) === 2)) return true;
+  return false;
+}
+
+const PALETTE_BUTTON_ICONS = {
+  // Mouse
+  'Left mouse button': '◧',
+  'Right mouse button': '◨',
+  'Middle mouse button': '◫',
+  'Forward button': '➔',
+  'Back button': '⬅',
+  'Wheel up': '▲',
+  'Wheel down': '▼',
+
+  // Media
+  'Mute': '🔇',
+  'Volume +': '🔊',
+  'Volume -': '🔉',
+  'Play / Pause': '⏯',
+  'Play/Pause': '⏯',
+  'Previous Track': '⏮',
+  'Next Track': '⏭',
+  'Stop': '⏹',
+  'Fast Forward': '⏩',
+  'Rewind': '⏪',
+
+  // Lighting
+  'Toggle keyboard backlight': '💡',
+  'Backlight brightness +': '🔆',
+  'Backlight brightness -': '🔅',
+  'Backlight speed +': '⚡+',
+  'Backlight speed -': '⚡-',
+  'Switch lighting effect': '🌈',
+  'Switch lighting color': '🎨',
+  'Switch indicator mode': '🚥',
+  'Indicator brightness +': '🚥+',
+  'Indicator brightness -': '🚥-',
+  'Indicator speed +': '⚡+',
+  'Indicator speed -': '⚡-',
+  'Switch indicator color': '🎨',
+  'Indicator On/Off': '💡',
+
+  // Shortcuts & System (Mac & Win)
+  'Screen brightness +': '🔆',
+  'Screen brightness -': '🔅',
+  'Mission Control': '⊞',
+  'Launchpad': '㗊',
+  'VoiceOver': '🎙',
+  'Search': '🔍',
+  'Search (Web)': '🔍',
+  'Refresh (web page)': '🔄',
+  'Emoji & Symbols': '🌐',
+  'Lock screen': '🔒',
+  'Force Quit': '⌥⌘⎋',
+  'Show/hide Dock': '⌥⌘D',
+  'switch window': '⌘⇥',
+  'Open Finder': '⌥⌘␣',
+  'Show bookmarks (Safari)': '⌥⌘B',
+  'Find/Address Bar': '⌘L',
+  'Go to home directory': '⌘⇧H',
+  'Zoom in': '⌘+',
+  'Zoom out': '⌘-',
+  'Actual Size': '⌘0',
+  'Undo': '⌘Z',
+  'Redo': '⇧⌘Z',
+  'Copy': '⌘C',
+  'Paste': '⌘V',
+  'Action center': '⌘A',
+  'Close current tab/window': '⌘W',
+  'New file/window': '⌘N',
+  'Browser homepage': '⌘H',
+  'Open file': '⌘O',
+  'Cycle taskbar Apps': '⌘⇥',
+  'Go back/up one level': '⌘[',
+  'Go to next page': '⌘]',
+  'Run': '⌘R',
+  'Switch Profile': '⟳',
+  'Clear': '⌧',
+  'Windows security screen': '🛡️',
+  'Task Manager': '📊',
+  'My computer': '💻',
+  'Favorites': '⭐',
+
+  // Basic Modifiers & Keys
+  'Left GUI / Win': '⌘',
+  'Right GUI / Win': '⌘',
+  'Left Alt / Option': '⌥',
+  'Right Alt / Option': '⌥',
+  'Left Ctrl': '⌃',
+  'Right Ctrl': '⌃',
+  'Left Shift': '⇧',
+  'Right Shift': '⇧',
+  'Caps Lock': '⇪',
+  'Backspace': '⌫',
+  'Enter': '⏎',
+  'Tab': '⇥',
+  'Esc': '⎋',
+  'Escape': '⎋',
+  'Delete': '⌦',
+  'Space': '␣',
+  'Up Arrow': '↑',
+  'Down Arrow': '↓',
+  'Left Arrow': '←',
+  'Right Arrow': '→',
+  '↑': '↑',
+  '↓': '↓',
+  '←': '←',
+  '→': '→',
+  'Page Up': '⇞',
+  'Page Down': '⇟',
+  'Home': '↖',
+  'End': '↘'
+};
+
+function getMacKeyIcon(key, assigned, rawLabel) {
+  if (assigned) {
+    const l = assigned.label || rawLabel;
+    if (l && PALETTE_BUTTON_ICONS[l]) return PALETTE_BUTTON_ICONS[l];
+    if (assigned.type === 16) {
+      if (assigned.code1 === 8 || assigned.code1 === 128) return '⌘';
+      if (assigned.code1 === 4 || assigned.code1 === 64) return '⌥';
+      if (assigned.code1 === 1 || assigned.code1 === 16) return '⌃';
+      if (assigned.code1 === 2 || assigned.code1 === 32) return '⇧';
+      if (assigned.code2 === 42) return '⌫';
+      if (assigned.code2 === 40) return '⏎';
+      if (assigned.code2 === 43) return '⇥';
+      if (assigned.code2 === 41) return '⎋';
+      if (assigned.code2 === 76) return '⌦';
+    }
+  }
+
+  if (rawLabel && PALETTE_BUTTON_ICONS[rawLabel]) {
+    return PALETTE_BUTTON_ICONS[rawLabel];
+  }
+
+  if (key) {
+    if (key.id === 'k_lwin') return '⌥';
+    if (key.id === 'k_lalt') return '⌘';
+    if (state.activeLayer === 2) {
+      if (key.id === 'k_f1') return '🔅';
+      if (key.id === 'k_f2') return '🔆';
+      if (key.id === 'k_f3') return '⊞';
+      if (key.id === 'k_f4') return '㗊';
+      if (key.id === 'k_f5') return '🎙';
+      if (key.id === 'k_f6') return '🌙';
+      if (key.id === 'k_f7') return '⏮';
+      if (key.id === 'k_f8') return '⏯';
+      if (key.id === 'k_f9') return '⏭';
+      if (key.id === 'k_f10') return '🔇';
+      if (key.id === 'k_f11') return '🔉';
+      if (key.id === 'k_f12') return '🔊';
+    }
+    if (key.id === 'k_esc') return '⎋';
+    if (key.id === 'k_tab') return '⇥';
+    if (key.id === 'k_caps') return '⇪';
+    if (key.id === 'k_enter') return '⏎';
+    if (key.id === 'k_lshift' || key.id === 'k_rshift') return '⇧';
+    if (key.id === 'k_backspace') return '⌫';
+    if (key.id === 'k_del') return '⌦';
+    if (key.id === 'k_lctrl' || key.id === 'k_rctrl') return '⌃';
+    if (key.id === 'k_space') return '␣';
+    if (key.id === 'k_up') return '↑';
+    if (key.id === 'k_down') return '↓';
+    if (key.id === 'k_left') return '←';
+    if (key.id === 'k_right') return '→';
+    if (key.id === 'k_pgup') return '⇞';
+    if (key.id === 'k_pgdn') return '⇟';
+    if (key.id === 'k_home') return '↖';
+    if (key.id === 'k_end') return '↘';
+  }
+
+  return null;
+}
+
+function getPaletteIcon(item) {
+  if (!item || !item.label) return null;
+  if (item.label === 'FN Layer') return null;
+  if (PALETTE_BUTTON_ICONS[item.label]) return PALETTE_BUTTON_ICONS[item.label];
+
+  if (item.type === 16) {
+    if (item.code === 227 || item.code === 231 || item.code1 === 8 || item.code1 === 128) return '⌘';
+    if (item.code === 226 || item.code === 230 || item.code1 === 4 || item.code1 === 64) return '⌥';
+    if (item.code === 224 || item.code === 228 || item.code1 === 1 || item.code1 === 16) return '⌃';
+    if (item.code === 225 || item.code === 229 || item.code1 === 2 || item.code1 === 32) return '⇧';
+  }
+  return null;
+}
+
 function patchKeyButton(keyEl, key, isLightingMode) {
   if (!keyEl) return;
   const customColor = state.stagedKeyColors[key.slot];
@@ -2052,9 +2242,20 @@ function patchKeyButton(keyEl, key, isLightingMode) {
   if (key.isKnob) {
     if (labelSpan && labelSpan.textContent !== '') labelSpan.textContent = '';
     keyEl.title = t('layout.knobTitle', { default: 'Rotary Knob (Slot 37)' });
+    delete keyEl.dataset.icon;
   } else {
     if (labelSpan && labelSpan.textContent !== label) labelSpan.textContent = label;
-    keyEl.classList.toggle('compact-label', Boolean(label && label.length >= 5));
+    const isMac = !isLightingMode && isMacConfig();
+    const assigned = !isLightingMode ? state.layerKeymaps[state.activeLayer]?.[key.slot] : null;
+    const icon = isMac ? getMacKeyIcon(key, assigned, label) : null;
+    if (icon) {
+      keyEl.dataset.icon = icon;
+      keyEl.classList.add('mac-icon-key');
+    } else {
+      delete keyEl.dataset.icon;
+      keyEl.classList.remove('mac-icon-key');
+    }
+    keyEl.classList.toggle('compact-label', Boolean(icon || (label && label.length >= 5)));
   }
   let dot = keyEl.querySelector('.key-color-dot');
   if (hasColor && !isLightingMode) {
@@ -2152,9 +2353,16 @@ function selectKey(key) {
     displayLabel = assigned.label || `M${(assigned.code1 || 0) + 1}`;
   }
   const customColor = state.stagedKeyColors[key.slot];
+  const isMac = isMacConfig();
+  const icon = isMac ? getMacKeyIcon(key, assigned, displayLabel) : null;
 
   if (box) {
     box.textContent = displayLabel;
+    if (icon) {
+      box.dataset.icon = icon;
+    } else {
+      delete box.dataset.icon;
+    }
     if (customColor && customColor !== '#000000') {
       box.style.borderColor = customColor;
       box.style.color = customColor;
@@ -2164,7 +2372,9 @@ function selectKey(key) {
     }
   }
 
-  if (nameEl) nameEl.textContent = key.name + (key.isKnob ? t('keymap.rotaryKnob') : '');
+  if (nameEl) {
+    nameEl.textContent = key.name + (key.isKnob ? t('keymap.rotaryKnob') : '');
+  }
   if (infoEl) {
     infoEl.textContent = key.isKnob
       ? t('keymap.knobHint')
@@ -2292,12 +2502,11 @@ function renderPalette() {
   }
 
   const categoryKeys = activeCategories[state.paletteCategory] || [];
-
   for (const item of categoryKeys) {
     const keyBtn = document.createElement('button');
     keyBtn.className = 'palette-key-btn';
     keyBtn.textContent = item.label;
-    keyBtn.title = `Code: ${item.code}`;
+    keyBtn.title = `${item.label} (Code: ${item.code})`;
 
     const bType = item.type !== undefined ? item.type : (item.code === 0 ? 0 : 16);
     const bCode1 = item.code1 !== undefined ? item.code1 : (item.code >= 224 && item.code <= 231 ? (1 << (item.code - 224)) : 0);
@@ -2307,6 +2516,12 @@ function renderPalette() {
     keyBtn.dataset.code1 = String(bCode1);
     keyBtn.dataset.code2 = String(bCode2);
     keyBtn.dataset.label = item.label;
+
+    const icon = getPaletteIcon(item);
+    if (icon) {
+      keyBtn.dataset.icon = icon;
+      keyBtn.classList.add('has-icon');
+    }
 
     keyBtn.addEventListener('click', () => {
       assignKeyToSelected(item);

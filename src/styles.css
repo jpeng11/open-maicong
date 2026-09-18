@@ -1211,6 +1211,45 @@ button.kb-key.compact-label .key-label {
   pointer-events: none;
 }
 
+.kb-key[data-icon]::before {
+  content: attr(data-icon);
+  display: block;
+  font-size: 13.5px;
+  line-height: 1;
+  font-style: normal;
+  font-weight: 600;
+  margin-bottom: 1px;
+  pointer-events: none;
+  color: var(--text-primary);
+}
+
+.kb-key.selected[data-icon]::before {
+  color: var(--theme-color);
+}
+
+.kb-key[data-icon] .key-label {
+  font-size: 8px;
+  line-height: 1;
+  opacity: 0.85;
+}
+
+#inspector-key-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+#inspector-key-box[data-icon]::before {
+  content: attr(data-icon);
+  display: block;
+  font-size: 22px;
+  line-height: 1;
+  font-weight: 700;
+  margin-bottom: 2px;
+  color: var(--theme-color);
+}
+
 .key-color-dot {
   width: 6px;
   height: 6px;
@@ -1739,25 +1778,55 @@ button.kb-key.compact-label .key-label {
 
 .palette-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
-  gap: 6px;
-  max-height: 180px;
+  grid-template-columns: repeat(auto-fill, minmax(74px, 1fr));
+  gap: 7px;
+  max-height: 220px;
   overflow-y: auto;
+  padding: 4px 2px;
 }
 
 .palette-key-btn {
   background: #fff;
   border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  padding: 8px 4px;
+  border-radius: 8px;
+  padding: 6px 4px;
   color: var(--text-primary);
-  font-size: 11px;
-  font-weight: 650;
+  font-size: 10.5px;
+  font-weight: 600;
   cursor: pointer;
   font-family: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  box-shadow: 0 1px 2px rgba(21, 21, 21, 0.04);
+  transition: all 0.12s ease;
+  line-height: 1.2;
+  text-align: center;
+  word-break: break-word;
 }
 
-.palette-key-btn:hover { border-color: var(--theme-color); }
+.palette-key-btn[data-icon]::before {
+  content: attr(data-icon);
+  display: block;
+  font-size: 17px;
+  line-height: 1.15;
+  margin-bottom: 2px;
+  font-style: normal;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-align: center;
+}
+
+.palette-key-btn:hover {
+  border-color: var(--theme-color);
+  box-shadow: 0 2px 6px rgba(0, 83, 226, 0.12);
+}
+
+.palette-key-btn:hover[data-icon]::before {
+  color: var(--theme-color);
+}
 
 .palette-key-btn[draggable="true"] { cursor: grab; }
 
@@ -2718,6 +2787,19 @@ label {
     border-color: var(--theme-color);
     color: #93c5fd;
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
+  }
+
+  .kb-key .mac-key-symbol {
+    color: #e5e7eb;
+  }
+  .kb-key .mac-key-sub {
+    color: #9ca3af;
+  }
+  .palette-key-btn .palette-mac-icon {
+    color: #e5e7eb;
+  }
+  .palette-key-btn .palette-mac-sub {
+    color: #9ca3af;
   }
 
   .sidebar-edit {
