@@ -37,7 +37,7 @@ describe('app locale catalogs', () => {
     const zhKeys = Object.keys(i18n.STRINGS.zh).sort();
     const enKeys = Object.keys(i18n.STRINGS.en).sort();
     assert.deepEqual(zhKeys, enKeys);
-    assert.equal(zhKeys.length, 795);
+    assert.equal(zhKeys.length, 796);
     for (const key of zhKeys) {
       assert.deepEqual(
         placeholders(i18n.STRINGS.zh[key]),

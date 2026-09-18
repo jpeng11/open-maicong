@@ -545,6 +545,30 @@ document.addEventListener('click', async event => {
 
   const action = btn.dataset.action;
 
+  const parentDropdown = btn.closest('.profile-menu-dropdown');
+  if (parentDropdown && action !== 'toggle-profile-menu') {
+    parentDropdown.classList.remove('show');
+    const pBtn = parentDropdown.closest('.profile-card')?.querySelector('.profile-more-btn');
+    if (pBtn) pBtn.classList.remove('active');
+  }
+
+  if (action === 'toggle-profile-menu') {
+    event.stopPropagation();
+    const card = btn.closest('.profile-card');
+    const menu = card ? card.querySelector('.profile-menu-dropdown') : null;
+    const isShown = menu && menu.classList.contains('show');
+    document.querySelectorAll('.profile-menu-dropdown.show').forEach((m) => {
+      m.classList.remove('show');
+      const pBtn = m.closest('.profile-card')?.querySelector('.profile-more-btn');
+      if (pBtn) pBtn.classList.remove('active');
+    });
+    if (menu && !isShown) {
+      menu.classList.add('show');
+      btn.classList.add('active');
+    }
+    return;
+  }
+
   if (action === 'set-tab') {
     if (btn.dataset.tab !== 'macros' && state.isRecordingMacro) {
       haltMacroRecording('tab-change');
@@ -1285,27 +1309,44 @@ function renderProfileLibrary() {
       card.dataset.drop = 'onboard';
       const title = enabled ? onboardName(i) : t('profile.notEnabledTitle', { name: onboardName(i) });
       card.innerHTML = `
-        <div class="profile-card-top">
-          <span class="profile-num">${String(i + 1).padStart(2, '0')}</span>
-          <span class="profile-tag"${isActive ? '' : ' hidden'}>${t('profile.active')}</span>
+        <div class="profile-card-header">
+          <div class="profile-info">
+            <div class="profile-info-main">
+              <span class="profile-num">${String(i + 1).padStart(2, '0')}</span>
+              <span class="profile-title" title="${escapeAttr(title)}">${escapeHtml(title)}</span>
+              <span class="profile-tag" hidden>${t('profile.active')}</span>
+            </div>
+            <p class="profile-desc">${enabled ? (bind
+              ? escapeHtml(t('profile.linkedTo', { name: bind.displayName || bind.bundleId }))
+              : t('profile.onboardDesc'))
+              : t('profile.notEnabledDesc')}</p>
+          </div>
+          <div class="profile-controls">
+            <button class="action-btn select-profile-btn ${isActive ? 'active' : ''}" data-action="switch-profile" data-profile="${i}" ${!enabled || isActive ? 'disabled' : ''}>${isActive ? t('profile.active') : (enabled ? t('profile.activate') : t('profile.notEnabled'))}</button>
+            <button type="button" class="profile-more-btn" data-action="toggle-profile-menu" data-profile="${i}" aria-label="${t('common.moreOptions') || 'More options'}" title="${t('common.moreOptions') || 'More options'}">
+              <svg class="line-icon sm"><use href="#i-more"/></svg>
+            </button>
+          </div>
         </div>
-        <div class="profile-title">${escapeHtml(title)}</div>
-        <p class="profile-desc">${enabled ? (bind
-          ? escapeHtml(t('profile.linkedTo', { name: bind.displayName || bind.bundleId }))
-          : t('profile.onboardDesc'))
-          : t('profile.notEnabledDesc')}</p>
-        <div class="profile-card-actions">
-          <button class="action-btn select-profile-btn" data-action="switch-profile" data-profile="${i}" ${!enabled || isActive ? 'disabled' : ''}>${isActive ? t('profile.active') : (enabled ? t('profile.activate') : t('profile.notEnabled'))}</button>
-          ${enabled ? `<button class="action-btn" data-action="copy-onboard-local" data-profile="${i}">${t('profile.copy')}</button>
-          <button class="action-btn" data-action="rename-profile" data-kind="keyboard" data-key="KeyboardProfile@keyboard@${i}" data-profile="${i}" data-name="${escapeAttr(onboardName(i))}">${t('profile.rename')}</button>
-          <button class="action-btn" data-action="export-official-profile" data-kind="keyboard" data-profile="${i}">${t('profile.export')}</button>
+        <div class="profile-card-actions profile-menu-dropdown" role="menu">
+          ${enabled ? `<button class="action-btn menu-item" data-action="copy-onboard-local" data-profile="${i}"><svg class="line-icon sm"><use href="#i-copy"/></svg><span>${t('profile.copy')}</span></button>
+          <button class="action-btn menu-item" data-action="rename-profile" data-kind="keyboard" data-key="KeyboardProfile@keyboard@${i}" data-profile="${i}" data-name="${escapeAttr(onboardName(i))}"><svg class="line-icon sm"><use href="#i-edit"/></svg><span>${t('profile.rename')}</span></button>
+          <button class="action-btn menu-item" data-action="export-official-profile" data-kind="keyboard" data-profile="${i}"><svg class="line-icon sm"><use href="#i-upload"/></svg><span>${t('profile.export')}</span></button>
           ${bind
-            ? `<button class="action-btn" data-action="unbind-profile-app" data-profile="${i}">${t('profile.unlinkApp')}</button>`
-            : `<button class="action-btn" data-action="bind-profile-app" data-profile="${i}">${t('profile.linkApp')}</button>`}` : ''}
-          ${enabled && count > 1 ? `<button class="action-btn" data-action="move-onboard-local" data-key="KeyboardProfile@keyboard@${i}">${t('profile.moveCustom')}</button>
-          <button class="action-btn" data-action="delete-onboard-profile" data-key="KeyboardProfile@keyboard@${i}">${t('profile.delete')}</button>` : ''}
-          ${!enabled ? `<button class="action-btn" data-action="enable-fourth-profile">${t('profile.enable4')}</button>` : ''}
+            ? `<button class="action-btn menu-item" data-action="unbind-profile-app" data-profile="${i}"><svg class="line-icon sm"><use href="#i-link"/></svg><span>${t('profile.unlinkApp')}</span></button>`
+            : `<button class="action-btn menu-item" data-action="bind-profile-app" data-profile="${i}"><svg class="line-icon sm"><use href="#i-link"/></svg><span>${t('profile.linkApp')}</span></button>`}` : ''}
+          ${enabled && count > 1 ? `<button class="action-btn menu-item" data-action="move-onboard-local" data-key="KeyboardProfile@keyboard@${i}"><svg class="line-icon sm"><use href="#i-box"/></svg><span>${t('profile.moveCustom')}</span></button>
+          <button class="action-btn menu-item danger" data-action="delete-onboard-profile" data-key="KeyboardProfile@keyboard@${i}"><svg class="line-icon sm"><use href="#i-trash"/></svg><span>${t('profile.delete')}</span></button>` : ''}
+          ${!enabled ? `<button class="action-btn menu-item" data-action="enable-fourth-profile"><svg class="line-icon sm"><use href="#i-refresh"/></svg><span>${t('profile.enable4')}</span></button>` : ''}
         </div>`;
+      card.addEventListener('click', (ev) => {
+        if (ev.target.closest('.profile-more-btn') || ev.target.closest('.profile-menu-dropdown') || ev.target.closest('.action-btn')) {
+          return;
+        }
+        if (enabled && !isActive) {
+          void handleSwitchProfile(i);
+        }
+      });
       attachOnboardDrop(card, `KeyboardProfile@keyboard@${i}`, enabled);
       onboardRoot.appendChild(card);
     }
@@ -1324,19 +1365,36 @@ function renderProfileLibrary() {
       card.draggable = true;
       card.dataset.key = item.key;
       card.innerHTML = `
-        <div class="profile-card-top">
-          <span class="profile-num">${t('profile.localTag')}</span>
-          <span class="profile-tag"${preview ? '' : ' hidden'}>${t('profile.preview')}</span>
+        <div class="profile-card-header">
+          <div class="profile-info">
+            <div class="profile-info-main">
+              <span class="profile-num">${t('profile.localTag')}</span>
+              <span class="profile-title" title="${escapeAttr(localizeProfileName(item.name))}">${escapeHtml(localizeProfileName(item.name))}</span>
+              <span class="profile-tag" hidden>${t('profile.preview')}</span>
+            </div>
+            <p class="profile-desc">${t('profile.localDesc')}</p>
+          </div>
+          <div class="profile-controls">
+            <button class="action-btn select-profile-btn ${preview ? 'active' : ''}" data-action="load-local-preview" data-key="${escapeAttr(item.key)}">${preview ? t('profile.previewingStatus') || t('profile.preview') : t('profile.loadPreview')}</button>
+            <button type="button" class="profile-more-btn" data-action="toggle-profile-menu" data-key="${escapeAttr(item.key)}" aria-label="${t('common.moreOptions') || 'More options'}" title="${t('common.moreOptions') || 'More options'}">
+              <svg class="line-icon sm"><use href="#i-more"/></svg>
+            </button>
+          </div>
         </div>
-        <div class="profile-title">${escapeHtml(localizeProfileName(item.name))}</div>
-        <p class="profile-desc">${t('profile.localDesc')}</p>
-        <div class="profile-card-actions">
-          <button class="action-btn" data-action="load-local-preview" data-key="${escapeAttr(item.key)}">${t('profile.loadPreview')}</button>
-          <button class="action-btn" data-action="move-local-onboard" data-key="${escapeAttr(item.key)}" data-activate="true">${t('profile.moveOnboard')}</button>
-          <button class="action-btn" data-action="rename-profile" data-kind="local" data-key="${escapeAttr(item.key)}" data-name="${escapeAttr(localizeProfileName(item.name))}">${t('profile.rename')}</button>
-          <button class="action-btn" data-action="export-official-profile" data-kind="local" data-key="${escapeAttr(item.key)}">${t('profile.export')}</button>
-          <button class="action-btn" data-action="delete-local-profile" data-key="${escapeAttr(item.key)}">${t('profile.delete')}</button>
+        <div class="profile-card-actions profile-menu-dropdown" role="menu">
+          <button class="action-btn menu-item" data-action="move-local-onboard" data-key="${escapeAttr(item.key)}" data-activate="true"><svg class="line-icon sm"><use href="#i-keyboard"/></svg><span>${t('profile.moveOnboard')}</span></button>
+          <button class="action-btn menu-item" data-action="rename-profile" data-kind="local" data-key="${escapeAttr(item.key)}" data-name="${escapeAttr(localizeProfileName(item.name))}"><svg class="line-icon sm"><use href="#i-edit"/></svg><span>${t('profile.rename')}</span></button>
+          <button class="action-btn menu-item" data-action="export-official-profile" data-kind="local" data-key="${escapeAttr(item.key)}"><svg class="line-icon sm"><use href="#i-upload"/></svg><span>${t('profile.export')}</span></button>
+          <button class="action-btn menu-item danger" data-action="delete-local-profile" data-key="${escapeAttr(item.key)}"><svg class="line-icon sm"><use href="#i-trash"/></svg><span>${t('profile.delete')}</span></button>
         </div>`;
+      card.addEventListener('click', (ev) => {
+        if (ev.target.closest('.profile-more-btn') || ev.target.closest('.profile-menu-dropdown') || ev.target.closest('.action-btn')) {
+          return;
+        }
+        if (!preview) {
+          void handleLoadLocalPreview(item.key);
+        }
+      });
       card.addEventListener('dragstart', (ev) => {
         ev.dataTransfer.setData('text/maicong-profile', item.key);
         ev.dataTransfer.effectAllowed = 'move';
@@ -1352,6 +1410,28 @@ function renderProfileLibrary() {
   const enableBtn = document.getElementById('btn-enable-fourth');
   if (enableBtn) enableBtn.disabled = count >= 4;
 }
+
+// Close profile dropdown menus when clicking outside
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('.profile-more-btn') && !event.target.closest('.profile-menu-dropdown')) {
+    document.querySelectorAll('.profile-menu-dropdown.show').forEach((m) => {
+      m.classList.remove('show');
+      const pBtn = m.closest('.profile-card')?.querySelector('.profile-more-btn');
+      if (pBtn) pBtn.classList.remove('active');
+    });
+  }
+});
+
+// Close profile dropdown menus on Escape key
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    document.querySelectorAll('.profile-menu-dropdown.show').forEach((m) => {
+      m.classList.remove('show');
+      const pBtn = m.closest('.profile-card')?.querySelector('.profile-more-btn');
+      if (pBtn) pBtn.classList.remove('active');
+    });
+  }
+});
 
 function escapeHtml(value) {
   return String(value == null ? '' : value)

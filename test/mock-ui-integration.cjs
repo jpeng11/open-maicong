@@ -251,7 +251,7 @@ async function run({ app, getWindow, getMock }) {
   assert.equal(zhTabs.tabLightingLabel, '灯光');
   assert.equal(zhTabs.tabOthersLabel, '其他');
   assert.equal(zhTabs.dashSubtitle, '连接、固件、电量和板载配置。');
-  assert.equal(zhTabs.keymapSubtitle, '四层：Windows、Windows + Fn、macOS、macOS + Fn。拖拽或点击命令到按键。板载改动自动保存；本机预览只留在这台 Mac。');
+  assert.equal(zhTabs.keymapSubtitle, '支持四个图层：Windows、Windows + Fn、macOS 及 macOS + Fn。可拖拽或点击命令绑定按键。板载修改自动保存，本机预览仅保留在当前设备。');
   assert.equal(zhTabs.keymapSelectedTitle, '当前按键');
   assert.equal(zhTabs.lightingBrightnessLabel, '亮度');
   assert.equal(zhTabs.factoryResetTitle, '恢复出厂');
@@ -267,7 +267,7 @@ async function run({ app, getWindow, getMock }) {
   const enTabs = await waitUntil((s) => s.tabLightingLabel === 'Lighting' && s.dashSubtitle.startsWith('Connection, firmware'), 20, 50);
   assert.equal(enTabs.tabLightingLabel, 'Lighting');
   assert.equal(enTabs.dashSubtitle, 'Connection, firmware, battery, and onboard profiles.');
-  assert.match(enTabs.keymapSubtitle, /Four layers: Windows, Windows \+ Fn, macOS, macOS \+ Fn/);
+  assert.match(enTabs.keymapSubtitle, /Four layers: Windows, Windows \+ Fn, macOS, (?:and )?macOS \+ Fn/);
   assert.equal(enTabs.keymapSelectedTitle, 'Selected Key');
   assert.equal(enTabs.lightingBrightnessLabel, 'Brightness');
   assert.equal(enTabs.factoryResetTitle, 'Factory reset');
@@ -3655,7 +3655,7 @@ async function run({ app, getWindow, getMock }) {
   assert.match(resetOpen.resetDialogBody || '', /Profile 1/);
   assert.match(resetOpen.resetDialogBody || '', /editing Profile 3/i);
   assert.doesNotMatch(resetOpen.resetDialogBody || '', /wire scope|ACK|238/i);
-  assert.match(resetOpen.resetDialogExportNote || '', /not .*whole keyboard|not an all-device backup/i);
+  assert.match(resetOpen.resetDialogExportNote || '', /not .*whole keyboard|not an all-device backup|rather than a full-device backup/i);
   assert.strictEqual(mock.wroteCommand(protocol.COMMANDS.FACTORY_RESET), false, 'opening review must not send 238');
 
   await win.webContents.executeJavaScript('document.getElementById("btn-reset-cancel")?.click()');
@@ -3754,7 +3754,7 @@ async function run({ app, getWindow, getMock }) {
   await sleep(600);
   const allOpen = await snapshot();
   assert.match(allOpen.resetDialogTitle || '', /all onboard profiles/i);
-  assert.match(allOpen.resetDialogBody || '', /every onboard profile/i);
+  assert.match(allOpen.resetDialogBody || '', /every onboard profile|all onboard profiles/i);
   assert.doesNotMatch(allOpen.resetDialogBody || '', /wire scope|ACK|238/i);
   assert.doesNotMatch(allOpen.resetDialogBody || '', /which is not the reset target|You are editing/i);
   await win.webContents.executeJavaScript('document.getElementById("btn-reset-export")?.click()');
