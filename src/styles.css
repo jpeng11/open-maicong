@@ -328,16 +328,23 @@ header.os-titlebar {
   padding: 0 24px 16px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+}
+
+#onboard-profile-list,
+#local-profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .profile-card {
   position: relative;
   background: #fff;
   border-radius: 10px;
-  padding: 8px 10px;
+  padding: 10px 12px;
   border: 1px solid var(--border);
-  box-shadow: 0 1px 2px rgba(21, 21, 21, 0.04);
+  box-shadow: 0 1px 3px rgba(21, 21, 21, 0.05);
   transition: border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
   cursor: pointer;
 }
@@ -356,9 +363,9 @@ header.os-titlebar {
   content: '';
   position: absolute;
   left: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 3px;
+  top: 10px;
+  bottom: 10px;
+  width: 3.5px;
   background: var(--theme-color);
   border-radius: 0 2px 2px 0;
 }
@@ -483,12 +490,16 @@ header.os-titlebar {
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-  margin: 8px 0 4px;
+  margin: 14px 0 4px;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-secondary);
+}
+
+.profile-library-head:first-of-type {
+  margin-top: 4px;
 }
 
 .profile-library-actions {
