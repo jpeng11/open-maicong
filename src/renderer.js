@@ -584,6 +584,11 @@ document.addEventListener('click', async event => {
   } else if (action === 'switch-profile') {
     const profile = parseInt(btn.dataset.profile, 10);
     await handleSwitchProfile(profile);
+  } else if (action === 'load-edit-profile') {
+    const profile = parseInt(btn.dataset.profile, 10);
+    const sel = document.getElementById('edit-profile-select');
+    if (sel) sel.value = String(profile);
+    await handleLoadEditTarget();
   } else if (action === 'load-edit-target') {
     await handleLoadEditTarget();
   } else if (action === 'activate-edit-profile') {
@@ -1178,6 +1183,39 @@ function updateFromDeviceState(devState) {
   renderKeyboard();
 }
 
+function renderDashboardProfiles() {
+  const container = document.getElementById('dash-onboard-slots');
+  if (!container) return;
+  const count = (state.base && state.base.profileCount) || 3;
+  container.replaceChildren();
+  for (let i = 0; i < 4; i++) {
+    const enabled = i < count;
+    const isActive = i === state.activeProfile;
+    const isEditing = !isLocalPreview() && i === state.editingProfile;
+    const bind = (state.appBinds || []).find((row) => row.profileIndex === i) || null;
+    const slotEl = document.createElement('div');
+    slotEl.className = 'dash-profile-slot' + (isActive ? ' active' : '') + (isEditing ? ' editing' : '') + (!enabled ? ' disabled' : '');
+    slotEl.innerHTML = `
+      <div class="dash-slot-num">${String(i + 1).padStart(2, '0')}</div>
+      <div class="dash-slot-info">
+        <div class="dash-slot-title">${escapeHtml(onboardName(i))}</div>
+        <div class="dash-slot-tags">
+          ${isActive ? `<span class="profile-tag active-tag">${t('profile.active')}</span>` : ''}
+          ${isEditing ? `<span class="profile-tag editing-tag">${t('sidebar.editingBadge')}</span>` : ''}
+          ${!enabled ? `<span class="profile-tag disabled-tag">${t('profile.notEnabled')}</span>` : ''}
+          ${bind ? `<span class="profile-tag bind-tag">${escapeHtml(bind.displayName || bind.bundleId)}</span>` : ''}
+        </div>
+      </div>
+      <div class="dash-slot-actions">
+        ${enabled && !isActive ? `<button type="button" class="action-btn sm primary" data-action="switch-profile" data-profile="${i}">${t('profile.activate')}</button>` : ''}
+        ${enabled && !isEditing ? `<button type="button" class="action-btn sm" data-action="load-edit-profile" data-profile="${i}">${t('sidebar.loadEdit')}</button>` : ''}
+        ${!enabled ? `<button type="button" class="action-btn sm" data-action="enable-fourth-profile">${t('profile.enable4')}</button>` : ''}
+      </div>
+    `;
+    container.appendChild(slotEl);
+  }
+}
+
 /**
  * Render Dashboard tab
  */
@@ -1243,6 +1281,7 @@ function renderDashboard() {
     chargingBadge.className = state.battery.isCharging ? 'badge badge-success' : 'badge badge-subtle';
   }
 
+  renderDashboardProfiles();
   renderProfileLibrary();
 }
 
@@ -1301,9 +1340,10 @@ function renderProfileLibrary() {
     for (let i = 0; i < 4; i++) {
       const enabled = i < count;
       const isActive = i === state.activeProfile;
+      const isEditing = !isLocalPreview() && i === state.editingProfile;
       const bind = (state.appBinds || []).find((row) => row.profileIndex === i) || null;
       const card = document.createElement('div');
-      card.className = 'profile-card' + (isActive ? ' active' : '') + (!enabled ? ' disabled' : '');
+      card.className = 'profile-card' + (isActive ? ' active' : '') + (isEditing ? ' editing' : '') + (!enabled ? ' disabled' : '');
       card.dataset.profile = String(i);
       card.dataset.key = `KeyboardProfile@keyboard@${i}`;
       card.dataset.drop = 'onboard';
@@ -1314,6 +1354,7 @@ function renderProfileLibrary() {
             <div class="profile-info-main">
               <span class="profile-num">${String(i + 1).padStart(2, '0')}</span>
               <span class="profile-title" title="${escapeAttr(title)}">${escapeHtml(title)}</span>
+              ${isEditing ? `<span class="profile-tag editing-tag">${t('sidebar.editingBadge')}</span>` : ''}
               <span class="profile-tag" hidden>${t('profile.active')}</span>
             </div>
             <p class="profile-desc">${enabled ? (bind
@@ -1329,6 +1370,8 @@ function renderProfileLibrary() {
           </div>
         </div>
         <div class="profile-card-actions profile-menu-dropdown" role="menu">
+          ${enabled && !isEditing ? `<button class="action-btn menu-item" data-action="load-edit-profile" data-profile="${i}"><svg class="line-icon sm"><use href="#i-edit"/></svg><span>${t('sidebar.loadEdit')}</span></button>` : ''}
+          ${enabled && !isActive ? `<button class="action-btn menu-item" data-action="switch-profile" data-profile="${i}"><svg class="line-icon sm"><use href="#i-radio"/></svg><span>${t('sidebar.activate')}</span></button>` : ''}
           ${enabled ? `<button class="action-btn menu-item" data-action="copy-onboard-local" data-profile="${i}"><svg class="line-icon sm"><use href="#i-copy"/></svg><span>${t('profile.copy')}</span></button>
           <button class="action-btn menu-item" data-action="rename-profile" data-kind="keyboard" data-key="KeyboardProfile@keyboard@${i}" data-profile="${i}" data-name="${escapeAttr(onboardName(i))}"><svg class="line-icon sm"><use href="#i-edit"/></svg><span>${t('profile.rename')}</span></button>
           <button class="action-btn menu-item" data-action="export-official-profile" data-kind="keyboard" data-profile="${i}"><svg class="line-icon sm"><use href="#i-upload"/></svg><span>${t('profile.export')}</span></button>
@@ -1343,8 +1386,10 @@ function renderProfileLibrary() {
         if (ev.target.closest('.profile-more-btn') || ev.target.closest('.profile-menu-dropdown') || ev.target.closest('.action-btn')) {
           return;
         }
-        if (enabled && !isActive) {
-          void handleSwitchProfile(i);
+        if (enabled && (!isEditing || isLocalPreview())) {
+          const sel = document.getElementById('edit-profile-select');
+          if (sel) sel.value = String(i);
+          void handleLoadEditTarget();
         }
       });
       attachOnboardDrop(card, `KeyboardProfile@keyboard@${i}`, enabled);
@@ -8115,6 +8160,8 @@ async function runLoadEditTarget(captured) {
     renderMacros();
     renderAdvancedPanel();
     renderEditTargetBar();
+    renderProfileLibrary();
+    renderDashboardProfiles();
     showToast(t('toast.editingProfile', { n: captured.profile + 1 }), 'success');
   } catch (err) {
     if (!loadRequestCurrent(captured)) return;
