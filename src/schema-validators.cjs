@@ -167,15 +167,18 @@ function layersContainAdvancedBindings(rawLayers) {
  * Allows optional calibrationRgb: { r, g, b }.
  *
  * @param {Object} params
+ * @param {{ allowHardwareReadback?: boolean }} [options]
  * @returns {{ valid: boolean, error?: string }}
  */
-function validateLightingParams(params) {
+function validateLightingParams(params, options = {}) {
   if (!isPlainObject(params)) {
     return { valid: false, error: 'Lighting parameters must be a plain non-null object' };
   }
 
+  // colorIndex is a read-back field (funcConfig byte 13) that mutateLighting
+  // preserves rather than writes; stored snapshots carry it round-trip.
   const allowedKeys = new Set([
-    'effect', 'brightness', 'speed', 'direction', 'customColorDisabled', 'hexColor',
+    'effect', 'brightness', 'speed', 'direction', 'customColorDisabled', 'colorIndex', 'hexColor',
     'sideEffect', 'sideBrightness', 'sideSpeed', 'sideCustomColorDisabled', 'sideHexColor',
     'calibrationRgb'
   ]);
@@ -186,9 +189,20 @@ function validateLightingParams(params) {
     }
   }
 
-  // Main effect: 0..22 (23 official effects)
+  if (params.colorIndex !== undefined && !isUint8(params.colorIndex)) {
+    return { valid: false, error: `Invalid colorIndex: ${params.colorIndex}. Must be uint8 integer 0..255` };
+  }
+
+  // Main effect: user-authored writes are 0..22 (23 official effects).
+  // Hardware can report other uint8 IDs; snapshots and full-profile restore
+  // must round-trip those so a copy stays faithful. Live editor applies still
+  // reject unknown IDs (see lighting-apply-patch).
   if (params.effect !== undefined) {
-    if (!isInteger(params.effect) || params.effect < 0 || params.effect > 22) {
+    if (options.allowHardwareReadback) {
+      if (!isUint8(params.effect)) {
+        return { valid: false, error: `Invalid lighting effect: ${params.effect}. Must be uint8 integer 0..255` };
+      }
+    } else if (!isInteger(params.effect) || params.effect < 0 || params.effect > 22) {
       return { valid: false, error: `Invalid lighting effect: ${params.effect}. Must be integer 0..22` };
     }
   }
@@ -230,10 +244,17 @@ function validateLightingParams(params) {
     }
   }
 
-  // Side Effect: 1..4 (1: Neon, 2: Constant On, 3: Breathing, 4: Off)
+  // Side Effect: user-authored writes are 0..4 (0: hardware unset, 1: Neon,
+  // 2: Constant On, 3: Breathing, 4: Off). Firmware also reports unknown
+  // IDs (the live editor already preserves sideEffect 9 across unrelated
+  // writes); snapshot/restore accepts any uint8 so those copies stay applyable.
   if (params.sideEffect !== undefined) {
-    if (!isInteger(params.sideEffect) || params.sideEffect < 1 || params.sideEffect > 4) {
-      return { valid: false, error: `Invalid sideEffect: ${params.sideEffect}. Must be integer 1..4` };
+    if (options.allowHardwareReadback) {
+      if (!isUint8(params.sideEffect)) {
+        return { valid: false, error: `Invalid sideEffect: ${params.sideEffect}. Must be uint8 integer 0..255` };
+      }
+    } else if (!isInteger(params.sideEffect) || params.sideEffect < 0 || params.sideEffect > 4) {
+      return { valid: false, error: `Invalid sideEffect: ${params.sideEffect}. Must be integer 0..4` };
     }
   }
 
@@ -292,9 +313,11 @@ function validateSettingsParams(settings) {
     return { valid: false, error: 'Settings parameters must be a plain non-null object' };
   }
 
+  // tickRate and reportRate24G are read-back fields that mutateSettings
+  // preserves rather than writes; stored snapshots carry them round-trip.
   const allowedKeys = new Set([
     'sleepTime', 'sleepMode', 'debounceLevel', 'macMode',
-    'reporteRate', 'lockWin', 'rollerType'
+    'reporteRate', 'lockWin', 'rollerType', 'tickRate', 'reportRate24G'
   ]);
 
   for (const key of Object.keys(settings)) {
@@ -344,6 +367,14 @@ function validateSettingsParams(settings) {
     if (!isUint8(settings.rollerType)) {
       return { valid: false, error: `Invalid rollerType: ${settings.rollerType}. Must be uint8 integer 0..255` };
     }
+  }
+
+  if (settings.tickRate !== undefined && !isUint8(settings.tickRate)) {
+    return { valid: false, error: `Invalid tickRate: ${settings.tickRate}. Must be uint8 integer 0..255` };
+  }
+
+  if (settings.reportRate24G !== undefined && !isUint8(settings.reportRate24G)) {
+    return { valid: false, error: `Invalid reportRate24G: ${settings.reportRate24G}. Must be uint8 integer 0..255` };
   }
 
   return { valid: true };
@@ -1076,7 +1107,7 @@ function validateProfileSchema(profileData) {
   if (!profileData.lighting) {
     return { valid: false, error: 'Missing required "lighting" section in profile backup' };
   }
-  const lVal = validateLightingParams(profileData.lighting);
+  const lVal = validateLightingParams(profileData.lighting, { allowHardwareReadback: true });
   if (!lVal.valid) return { valid: false, error: `Lighting validation failed: ${lVal.error}` };
 
   if (!profileData.settings) {

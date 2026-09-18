@@ -140,6 +140,34 @@ describe('official KeyboardProfile envelope', () => {
     assert.equal(JSON.stringify(inspected).includes('"brightness":100'), false);
   });
 
+  test('malformed official lightValueStore is rejected instead of silently dropped', () => {
+    const corrupt = JSON.parse(JSON.stringify(official));
+    corrupt.data.lightValueStore = { light: 'totally corrupt', sideLight: 42 };
+    const inspected = profileFile.inspectOfficialEnvelope(corrupt);
+    assert.equal(inspected.valid, false);
+    assert.equal(inspected.native, undefined);
+    assert.match(inspected.error || '', /lightValueStore/i);
+
+    const corruptSide2 = JSON.parse(JSON.stringify(official));
+    corruptSide2.data.lightValueStore = { light: [], sideLight: [], sideLight2: 'x' };
+    const inspectedSide2 = profileFile.inspectOfficialEnvelope(corruptSide2);
+    assert.equal(inspectedSide2.valid, false);
+    assert.match(inspectedSide2.error || '', /lightValueStore/i);
+
+    const empty = profileFile.inspectOfficialEnvelope(JSON.parse(JSON.stringify(official)));
+    assert.equal(empty.valid, true, empty.error);
+    assert.equal(empty.native.lightingMemory, undefined);
+  });
+
+  test('legacy version 2 envelopes are rejected explicitly', () => {
+    const v2 = JSON.parse(JSON.stringify(official));
+    v2.version = 2;
+    const inspected = profileFile.inspectOfficialEnvelope(v2);
+    assert.equal(inspected.valid, false);
+    assert.equal(inspected.native, undefined);
+    assert.match(inspected.error || '', /legacy.*version: 2/i);
+  });
+
   test('independent official MT/TGL fixture converts to native tables and keeps shared references', () => {
     const raw = fs.readFileSync(path.join(__dirname, 'fixtures', 'official-keyboard-profile-v3-advanced-mt-tgl.json'), 'utf8');
     assert.match(raw, /"clickKey"/);

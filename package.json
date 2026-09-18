@@ -13,8 +13,7 @@
     "smoke": "electron . --smoke-test",
     "icon": "node scripts/generate-icon.cjs",
     "pack": "npm run icon && electron-builder --mac --dir",
-    "dist": "npm run icon && electron-builder --mac dmg zip",
-    "dist:all": "npm run icon && electron-builder --mac dmg zip --arm64 --x64"
+    "dist": "npm run icon && electron-builder --mac dmg zip && node scripts/verify-cask.cjs"
   },
   "devDependencies": {
     "electron": "44.3.0",
@@ -25,12 +24,15 @@
     "productName": "Maicong Studio",
     "files": [
       "src/**/*",
-      "package.json"
+      "package.json",
+      "!**/node_modules/node-hid/prebuilds/HID-!(darwin-${arch}){,/**}",
+      "!**/node_modules/node-hid/prebuilds/HID_hidraw-*{,/**}"
     ],
     "directories": {
       "output": "dist"
     },
     "artifactName": "Maicong-Studio-${version}-${arch}.${ext}",
+    "afterPack": "scripts/adhoc-sign.cjs",
     "mac": {
       "category": "public.app-category.utilities",
       "icon": "build/icon.icns",
@@ -45,6 +47,6 @@
     }
   },
   "dependencies": {
-    "node-hid": "^3.4.0"
+    "node-hid": "3.4.0"
   }
 }

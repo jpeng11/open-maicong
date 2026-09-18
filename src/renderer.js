@@ -10,12 +10,64 @@ function t(key, vars) {
   return I18n && typeof I18n.t === 'function' ? I18n.t(key, vars) : (vars && vars.default) || key;
 }
 
+function localizePaletteCategory(cat) {
+  const keys = {
+    Macros: 'palette.macros',
+    Basic: 'palette.basic',
+    Lighting: 'palette.lighting',
+    'Media & Audio': 'palette.media',
+    'Extended Func': 'palette.extended',
+    'Special & Extra': 'palette.special'
+  };
+  return keys[cat] ? t(keys[cat]) : cat;
+}
+
+function lightingMemoryHintText(pref = {}) {
+  const local = pref.fallback === 'local';
+  const kind = pref.identityKind || '';
+  let hint;
+  if (local) {
+    if (kind === 'serial') hint = t('light.memoryHintLocalSerial', { serial: pref.serial || state.device?.serialNumber || '' });
+    else if (kind === 'path') hint = t('light.memoryHintLocalPath');
+    else hint = t('light.memoryHintLocalUnscoped');
+  } else if (kind === 'path') {
+    hint = t('light.memoryHintHwPath');
+  } else if (kind === 'serial') {
+    hint = t('light.memoryHintHw');
+  } else {
+    hint = t('light.memoryHintHwUnscoped');
+  }
+  if (pref.recovered && pref.error) return t('light.memoryRecovered', { hint });
+  return hint;
+}
+
 function refreshLocaleUi() {
   if (I18n && typeof I18n.apply === 'function') I18n.apply(document);
+  renderConnectionChrome();
   renderEditTargetBar();
   renderProfileLibrary();
   if (typeof renderLightingControls === 'function') renderLightingControls();
   if (typeof renderDashboard === 'function') renderDashboard();
+  if (typeof renderKeyboard === 'function') renderKeyboard();
+  if (typeof renderMacros === 'function') renderMacros();
+  if (typeof renderAdvancedPanel === 'function') renderAdvancedPanel();
+  if (typeof renderKeymapSaveStatus === 'function') renderKeymapSaveStatus();
+  if (typeof renderSettingsSaveStatus === 'function') renderSettingsSaveStatus();
+  if (typeof renderLightingSaveStatus === 'function') renderLightingSaveStatus();
+  if (typeof renderSettingsControls === 'function') renderSettingsControls();
+  if (typeof renderPalette === 'function') renderPalette();
+  if (typeof renderKeyRecorder === 'function') renderKeyRecorder();
+  if (typeof renderFirmwareRecovery === 'function') renderFirmwareRecovery();
+  if (typeof renderFirmwarePanel === 'function') renderFirmwarePanel(state.firmwareStatus);
+  if (typeof applyFirmwareReviewDialogCopy === 'function' && state.firmwareDialogOpen) {
+    applyFirmwareReviewDialogCopy();
+  }
+  if (typeof applyFirmwareRecoveryDialogCopy === 'function' && state.firmwareRecoveryDialogOpen) {
+    applyFirmwareRecoveryDialogCopy();
+  }
+  if (typeof applyResetDialogCopy === 'function' && state.resetDialogOpen && state.resetReview) {
+    applyResetDialogCopy(state.resetReview.scope || (state.resetReview.all ? 'all' : 'active'), state.resetReview);
+  }
 }
 const MacroDraft = window.MaicongMacroDraft;
 const LightingAutosave = window.MaicongLightingAutosave;
@@ -141,6 +193,11 @@ const state = {
   firmwareDialogOpen: false,
   firmwareCommitInFlight: false,
   firmwareDialogOpener: null,
+  firmwareReview: null,
+  firmwareInterrupted: null,
+  firmwareRecoveryDialogOpen: false,
+  firmwareRecoveryDialogMode: null,
+  firmwareRecoveryDialogOpener: null,
   lastUnsolicitedResetKey: null,
   lightingScope: 'main',
   mainLightTab: 'normal',
@@ -386,10 +443,10 @@ async function persistMacroMetadata() {
   try {
     const res = await api.setMacroMetadata(meta);
     if (res && res.success === false) {
-      showToast(`Failed to save macro metadata: ${res.error}`, 'error', 4000);
+      showToast(t('toast.macroMetaSaveFailed', { error: res.error }), 'error', 4000);
     }
   } catch (err) {
-    showToast(`Failed to save macro metadata: ${err.message}`, 'error', 4000);
+    showToast(t('toast.macroMetaSaveFailed', { error: err.message }), 'error', 4000);
   }
 }
 
@@ -465,15 +522,20 @@ function switchTab(tabId) {
     const isActive = tab.dataset.tab === tabId;
     tab.classList.toggle('active', isActive);
     tab.setAttribute('aria-selected', String(isActive));
+    tab.tabIndex = isActive ? 0 : -1;
   });
 
   Object.entries(els.panels).forEach(([id, panel]) => {
     if (panel) panel.hidden = id !== tabId;
   });
 
-  renderKeyboard();
+  // Only the keymap, lighting, and advanced panels contain a key grid.
+  if (tabId === 'keymap' || tabId === 'lighting' || tabId === 'advanced') renderKeyboard();
   if (tabId === 'lighting') renderLightingControls();
-  if (tabId === 'others') void refreshFirmwarePanel();
+  if (tabId === 'others') {
+    void refreshFirmwarePanel();
+    void refreshInterruptedFirmware();
+  }
 }
 
 // Global Event Delegation for buttons
@@ -712,6 +774,14 @@ document.addEventListener('click', async event => {
     closeFirmwareDialog();
   } else if (action === 'firmware-dialog-confirm') {
     await confirmFirmwareDialog();
+  } else if (action === 'firmware-resume') {
+    await handleResumeInterruptedFirmware();
+  } else if (action === 'firmware-discard') {
+    openFirmwareRecoveryDialog('discard');
+  } else if (action === 'firmware-recovery-cancel') {
+    closeFirmwareRecoveryDialog();
+  } else if (action === 'firmware-recovery-confirm') {
+    await confirmFirmwareRecoveryDialog();
   }
 });
 
@@ -754,6 +824,11 @@ document.addEventListener('keydown', event => {
   if (document.getElementById('app-bind-delete-dialog') && !document.getElementById('app-bind-delete-dialog').hidden && event.key === 'Escape') {
     event.preventDefault();
     closeAppBindDeleteDialog(false);
+    return;
+  }
+  if (state.firmwareRecoveryDialogOpen && event.key === 'Escape') {
+    event.preventDefault();
+    if (!state.firmwareCommitInFlight) closeFirmwareRecoveryDialog();
     return;
   }
   if (state.firmwareDialogOpen && event.key === 'Escape') {
@@ -804,9 +879,46 @@ document.addEventListener('keydown', event => {
     closeGifEditor();
     return;
   }
-  if (state.resetDialogOpen && event.key === 'Tab') {
-    trapResetDialogFocus(event);
-    return;
+  const profileNameDialog = document.getElementById('profile-name-dialog');
+  if (profileNameDialog && !profileNameDialog.hidden) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeProfileNameDialog();
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void confirmProfileNameDialog();
+      return;
+    }
+  }
+  if (event.key === 'Tab') {
+    const topDialog = topmostVisibleDialog();
+    if (topDialog) {
+      trapModalFocus(event, topDialog);
+      return;
+    }
+  }
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'Home' || event.key === 'End') {
+    const tabEl = event.target && event.target.closest ? event.target.closest('.view-tabs [role="tab"]') : null;
+    if (tabEl) {
+      const tabs = els.tabs.filter((tab) => !tab.hidden);
+      const idx = tabs.indexOf(tabEl);
+      if (idx !== -1) {
+        event.preventDefault();
+        let next = idx;
+        if (event.key === 'ArrowLeft') next = (idx - 1 + tabs.length) % tabs.length;
+        else if (event.key === 'ArrowRight') next = (idx + 1) % tabs.length;
+        else if (event.key === 'Home') next = 0;
+        else if (event.key === 'End') next = tabs.length - 1;
+        const target = tabs[next];
+        if (target) {
+          switchTab(target.dataset.tab);
+          target.focus();
+        }
+      }
+      return;
+    }
   }
   if ((event.metaKey || event.ctrlKey) && event.key >= '1' && event.key <= '7') {
     event.preventDefault();
@@ -820,20 +932,20 @@ document.addEventListener('keydown', event => {
  * Scan for MCHOSE hardware
  */
 async function scanHardware() {
-  showToast('Scanning USB bus for MCHOSE hardware…', 'info', 2000);
+  showToast(t('toast.scanning'), 'info', 2000);
   try {
     const res = await api.scan();
     if (res && res.state) {
       state.lightingHydrateLocked = false;
       updateFromDeviceState(res.state);
       if (res.state.connected) {
-        showToast('Connected to MCHOSE G75 V2 via 2.4GHz receiver!', 'success');
+        showToast(t('toast.connectedReceiver'), 'success');
       } else {
-        showToast('No MCHOSE device connected. Operating in offline staging mode.', 'warning');
+        showToast(t('toast.offline'), 'warning');
       }
     }
   } catch (err) {
-    showToast(`Scan error: ${err.message}`, 'error');
+    showToast(t('toast.scanError', { error: err.message }), 'error');
   }
 }
 
@@ -846,10 +958,10 @@ async function refreshTelemetry() {
     if (newState) {
       state.lightingHydrateLocked = false;
       updateFromDeviceState(newState);
-      showToast('Telemetry refreshed from hardware.', 'success');
+      showToast(t('toast.refreshed'), 'success');
     }
   } catch (err) {
-    showToast(`Failed to refresh telemetry: ${err.message}`, 'error');
+    showToast(t('toast.refreshFailed', { error: err.message }), 'error');
   }
 }
 
@@ -872,6 +984,37 @@ function applyResetInvalidation(reason) {
   invalidateEditorSnapshots();
   if (state.resetDialogOpen && !state.resetCommitInFlight) closeResetDialog();
   updateApplyButtonsState();
+}
+
+// Titlebar chrome derived purely from state; also re-run on locale switch.
+function renderConnectionChrome() {
+  if (els.connectionPill && els.deviceStatusText) {
+    const fullId = state.device
+      ? `${state.device.product} (${state.device.hexVendorId}:${state.device.hexProductId})`
+      : 'MCHOSE G75 V2';
+    els.connectionPill.title = fullId;
+    if (state.needsReconnect) {
+      els.connectionPill.className = 'connection-pill reconnecting';
+      els.deviceStatusText.textContent = t('status.timeout');
+    } else if (state.connected && state.device) {
+      els.connectionPill.className = 'connection-pill connected';
+      els.deviceStatusText.textContent = state.device.isReceiver ? t('status.receiver') : t('status.usb');
+    } else {
+      els.connectionPill.className = 'connection-pill disconnected';
+      els.deviceStatusText.textContent = t('status.offline');
+    }
+  }
+  if (els.batteryStatText) {
+    if (state.connected && state.battery.batteryLevel !== null) {
+      const chg = state.battery.isCharging ? t('status.chargingSuffix') : '';
+      els.batteryStatText.textContent = `${state.battery.batteryLevel}%${chg}`;
+    } else {
+      els.batteryStatText.textContent = '--%';
+    }
+  }
+  if (els.profileStatText) {
+    els.profileStatText.textContent = t('sidebar.hwEdit', { hw: state.activeProfile + 1, edit: state.editingProfile + 1 });
+  }
 }
 
 function updateFromDeviceState(devState) {
@@ -903,7 +1046,7 @@ function updateFromDeviceState(devState) {
     const key = `${state.resetEpoch}:${devState.lastResetOutcome.notificationKind || 'unsolicited'}`;
     if (state.lastUnsolicitedResetKey !== key) {
       state.lastUnsolicitedResetKey = key;
-      showToast('The keyboard reported a factory reset. Local drafts were discarded. Read the keyboard before editing.', 'warning', 6000);
+      showToast(t('toast.unsolicitedReset'), 'warning', 6000);
     }
   }
   if (Array.isArray(devState.appBinds)) state.appBinds = devState.appBinds;
@@ -990,44 +1133,13 @@ function updateFromDeviceState(devState) {
   if (Array.isArray(devState.profileNames)) {
     state.profileNames = devState.profileNames;
   }
-  if (devState.editSource && !isLocalPreview()) {
+  if (devState.editSource && !isLocalPreview() && !state.loadInFlight) {
     state.editSource = devState.editSource;
   }
 
   renderProfileLibrary();
 
-  // Update top titlebar pill
-  if (els.connectionPill && els.deviceStatusText) {
-    const fullId = state.device
-      ? `${state.device.product} (${state.device.hexVendorId}:${state.device.hexProductId})`
-      : 'MCHOSE G75 V2';
-    els.connectionPill.title = fullId;
-    if (state.needsReconnect) {
-      els.connectionPill.className = 'connection-pill reconnecting';
-      els.deviceStatusText.textContent = t('status.timeout');
-    } else if (state.connected && state.device) {
-      els.connectionPill.className = 'connection-pill connected';
-      els.deviceStatusText.textContent = state.device.isReceiver ? t('status.receiver') : t('status.usb');
-    } else {
-      els.connectionPill.className = 'connection-pill disconnected';
-      els.deviceStatusText.textContent = t('status.offline');
-    }
-  }
-
-  // Update top battery stat
-  if (els.batteryStatText) {
-    if (state.connected && state.battery.batteryLevel !== null) {
-      const chg = state.battery.isCharging ? ' charging' : '';
-      els.batteryStatText.textContent = `${state.battery.batteryLevel}%${chg}`;
-    } else {
-      els.batteryStatText.textContent = '--%';
-    }
-  }
-
-  // Update top profile stat
-  if (els.profileStatText) {
-    els.profileStatText.textContent = t('sidebar.hwEdit', { hw: state.activeProfile + 1, edit: state.editingProfile + 1 });
-  }
+  renderConnectionChrome();
 
   // Update Dashboard Tab
   renderDashboard();
@@ -1067,10 +1179,10 @@ function renderDashboard() {
   }
   if (dashTransport) {
     if (state.needsReconnect) {
-      dashTransport.textContent = 'Connection Timeout (Click Scan to Reconnect)';
+      dashTransport.textContent = t('dash.timeoutReconnect');
     } else {
       dashTransport.textContent = state.connected
-        ? (state.device?.isReceiver ? '2.4GHz Wireless Receiver' : 'USB-C Cable')
+        ? (state.device?.isReceiver ? t('dash.receiverFull') : t('dash.usbCable'))
         : t('status.notConnected');
     }
   }
@@ -1078,7 +1190,7 @@ function renderDashboard() {
     dashVidPid.textContent = state.device ? `${state.device.hexVendorId} : ${state.device.hexProductId}` : '-- : --';
   }
   if (dashDongle) {
-    dashDongle.textContent = state.info?.dongleInfo || (state.connected ? 'Querying…' : 'Disconnected');
+    dashDongle.textContent = state.info?.dongleInfo || (state.connected ? t('dash.querying') : t('dash.disconnected'));
   }
   const dashBuildDate = document.getElementById('dash-builddate');
   if (dashBuildDate) {
@@ -1102,8 +1214,8 @@ function renderDashboard() {
   }
   if (chargingBadge) {
     chargingBadge.textContent = state.battery.batteryLevel !== null
-      ? (state.battery.isCharging ? 'Charging ⚡' : 'Discharging')
-      : 'No Telemetry';
+      ? (state.battery.isCharging ? `${t('status.charging')} ⚡` : t('status.discharging'))
+      : t('status.noTelemetry');
     chargingBadge.className = state.battery.isCharging ? 'badge badge-success' : 'badge badge-subtle';
   }
 
@@ -1117,18 +1229,20 @@ function isLocalPreview() {
 function localizeProfileName(value, index) {
   const text = String(value == null ? '' : value);
   const localized = text.replace(/i18n<([^>]+)>/g, (full, key) => (
-    key === 'defaultOnboard' ? 'Default Onboard' : full
+    key === 'defaultOnboard' ? t('profile.defaultOnboard') : full
+  )).replace(/^Default Onboard(\d*)$/, (_, n) => (
+    n ? t('profile.defaultOnboardN', { n }) : t('profile.defaultOnboard')
   ));
   if (localized.trim()) return localized;
   if (Number.isInteger(index) && index >= 0) {
-    return index === 0 ? 'Default Onboard' : `Default Onboard${index + 1}`;
+    return index === 0 ? t('profile.defaultOnboard') : t('profile.defaultOnboardN', { n: index + 1 });
   }
   return localized;
 }
 
 function onboardName(index) {
   const names = state.profileNames || [];
-  return localizeProfileName(names[index], index) || `Profile ${index + 1}`;
+  return localizeProfileName(names[index], index) || t('profile.fallbackName', { n: index + 1 });
 }
 
 function setProfileBusy(busy, message) {
@@ -1149,13 +1263,13 @@ function renderProfileLibrary() {
   const lib = state.profileLibrary || {};
   const count = (state.base && state.base.profileCount) || 0;
   const remaining = lib.remaining != null ? lib.remaining : Math.max(0, 20 - count - ((lib.local && lib.local.length) || 0));
-  if (cap) cap.textContent = `${count + ((lib.local && lib.local.length) || 0)}/20 · ${remaining} left`;
+  if (cap) cap.textContent = t('sidebar.capacity', { used: count + ((lib.local && lib.local.length) || 0), n: remaining });
   const names = state.profileNames || [];
   const sel = document.getElementById('edit-profile-select');
   if (sel) {
     for (let i = 0; i < 4; i++) {
       const opt = sel.options[i];
-      if (opt) opt.textContent = localizeProfileName(names[i], i) || `Profile ${i + 1}`;
+      if (opt) opt.textContent = localizeProfileName(names[i], i) || t('profile.fallbackName', { n: i + 1 });
     }
   }
   if (onboardRoot) {
@@ -1169,11 +1283,11 @@ function renderProfileLibrary() {
       card.dataset.profile = String(i);
       card.dataset.key = `KeyboardProfile@keyboard@${i}`;
       card.dataset.drop = 'onboard';
-      const title = enabled ? onboardName(i) : `${onboardName(i)} (Not enabled)`;
+      const title = enabled ? onboardName(i) : t('profile.notEnabledTitle', { name: onboardName(i) });
       card.innerHTML = `
         <div class="profile-card-top">
           <span class="profile-num">${String(i + 1).padStart(2, '0')}</span>
-          <span class="profile-tag"${isActive ? '' : ' hidden'}>Active</span>
+          <span class="profile-tag"${isActive ? '' : ' hidden'}>${t('profile.active')}</span>
         </div>
         <div class="profile-title">${escapeHtml(title)}</div>
         <p class="profile-desc">${enabled ? (bind
@@ -1196,13 +1310,12 @@ function renderProfileLibrary() {
       onboardRoot.appendChild(card);
     }
   }
+  // #profile-free-slot is static markup; its drop handlers attach once in init.
   if (freeSlot) {
     freeSlot.hidden = count >= 4;
-    attachOnboardDrop(freeSlot, null, true);
   }
   if (localRoot) {
     localRoot.replaceChildren();
-    const items = (lib.local || lib.items || []).filter((item) => item && item.type === 'localstorage' || item && item.key);
     const localItems = (lib.local && lib.local.length) ? lib.local : (lib.items || []);
     for (const item of localItems) {
       const card = document.createElement('div');
@@ -1212,8 +1325,8 @@ function renderProfileLibrary() {
       card.dataset.key = item.key;
       card.innerHTML = `
         <div class="profile-card-top">
-          <span class="profile-num">Local</span>
-          <span class="profile-tag"${preview ? '' : ' hidden'}>Preview</span>
+          <span class="profile-num">${t('profile.localTag')}</span>
+          <span class="profile-tag"${preview ? '' : ' hidden'}>${t('profile.preview')}</span>
         </div>
         <div class="profile-title">${escapeHtml(localizeProfileName(item.name))}</div>
         <p class="profile-desc">${t('profile.localDesc')}</p>
@@ -1233,7 +1346,7 @@ function renderProfileLibrary() {
   }
   const status = document.getElementById('profile-library-status');
   if (status) {
-    status.textContent = lib.error || (isLocalPreview() ? 'Previewing a custom profile. Keyboard hardware is not being written.' : '');
+    status.textContent = lib.error || (isLocalPreview() ? t('profile.previewingStatus') : '');
     status.hidden = !status.textContent;
   }
   const enableBtn = document.getElementById('btn-enable-fourth');
@@ -1245,7 +1358,8 @@ function escapeHtml(value) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function escapeAttr(value) {
@@ -1276,18 +1390,18 @@ async function handleSwitchProfile(profileIndex) {
     state.editSource = { kind: 'onboard', profileIndex };
     await api.setEditSource({ kind: 'onboard', profileIndex });
   }
-  showToast(`Switching keyboard to Profile ${profileIndex + 1}…`, 'info');
+  showToast(t('toast.switchingProfile', { n: profileIndex + 1 }), 'info');
   try {
     const res = await api.switchProfile(profileIndex);
     if (res.success) {
       state.activeProfile = profileIndex;
-      showToast(`Active profile set to Profile ${profileIndex + 1}`, 'success');
+      showToast(t('toast.profileActivated', { n: profileIndex + 1 }), 'success');
       renderDashboard();
     } else {
-      showToast(`Failed to switch profile: ${res.error}`, 'error');
+      showToast(t('toast.switchProfileFailed', { error: res.error }), 'error');
     }
   } catch (err) {
-    showToast(`Error switching profile: ${err.message}`, 'error');
+    showToast(t('toast.switchProfileError', { error: err.message }), 'error');
   }
 }
 
@@ -1296,12 +1410,13 @@ function openProfileNameDialog(mode, key, kind, profile, currentName) {
   state.profileNameDialogKey = key || null;
   state.profileNameDialogKind = kind || 'local';
   state.profileNameDialogProfile = profile;
+  state.profileNameDialogOpener = document.activeElement;
   const dialog = document.getElementById('profile-name-dialog');
   const title = document.getElementById('profile-name-title');
   const input = document.getElementById('profile-name-input');
   const err = document.getElementById('profile-name-error');
-  if (title) title.textContent = mode === 'rename' ? 'Rename' : 'Create configuration';
-  if (input) input.value = currentName || (mode === 'create' ? 'New configuration 1' : '');
+  if (title) title.textContent = mode === 'rename' ? t('profile.rename') : t('dialog.createConfig');
+  if (input) input.value = currentName || (mode === 'create' ? t('profile.defaultName', { n: 1 }) : '');
   if (err) err.hidden = true;
   if (dialog) dialog.hidden = false;
   if (input) input.focus();
@@ -1311,6 +1426,11 @@ function closeProfileNameDialog() {
   const dialog = document.getElementById('profile-name-dialog');
   if (dialog) dialog.hidden = true;
   state.profileNameDialogMode = null;
+  const opener = state.profileNameDialogOpener;
+  state.profileNameDialogOpener = null;
+  if (opener && typeof opener.focus === 'function' && document.contains(opener)) {
+    opener.focus();
+  }
 }
 
 async function confirmProfileNameDialog() {
@@ -1330,7 +1450,7 @@ async function confirmProfileNameDialog() {
         return;
       }
       if (res.profileLibrary) state.profileLibrary = res.profileLibrary;
-      showToast('Configuration renamed', 'success');
+      showToast(t('toast.profileRenamed'), 'success');
     } else {
       const res = await api.createLocalProfile(name);
       if (!res.success) {
@@ -1338,7 +1458,7 @@ async function confirmProfileNameDialog() {
         return;
       }
       if (res.profileLibrary) state.profileLibrary = res.profileLibrary;
-      showToast('Custom configuration created', 'success');
+      showToast(t('toast.customCreated'), 'success');
     }
     closeProfileNameDialog();
     renderProfileLibrary();
@@ -1364,47 +1484,47 @@ async function flushLightingThen(label) {
   if (typeof waitForLightingWorkerQuiet === 'function') {
     const quiet = await waitForLightingWorkerQuiet(captured);
     if (!quiet) {
-      showToast('Still saving lighting. Profile change did not start.', 'warning');
+      showToast(t('toast.stillSavingLightingProfile'), 'warning');
       return false;
     }
   }
   if (typeof waitForKeymapWorkerQuiet === 'function') {
     const keymapQuiet = await waitForKeymapWorkerQuiet(captured);
     if (!keymapQuiet) {
-      showToast('Still saving key bindings. Profile change did not start.', 'warning');
+      showToast(t('toast.stillSavingKeysProfile'), 'warning');
       return false;
     }
   }
   if (typeof waitForSettingsWorkerQuiet === 'function') {
     const settingsQuiet = await waitForSettingsWorkerQuiet(captured);
     if (!settingsQuiet) {
-      showToast('Still saving performance settings. Profile change did not start.', 'warning');
+      showToast(t('toast.stillSavingSettingsProfile'), 'warning');
       return false;
     }
   }
   if (state.settingsSaveStatus === 'error' || state.settingsDraftDirty || PerformanceAutosave.hasDirty(state.settingsEdited)) {
-    showToast(state.settingsSaveError || 'Unsaved performance settings could not be saved. Profile change did not start.', 'error');
+    showToast(state.settingsSaveError || t('toast.unsavedSettingsProfile'), 'error');
     return false;
   }
   return true;
 }
 
 async function handleCopyOnboardToLocal(profileIndex) {
-  showToast('Copying onboard configuration to custom…', 'info');
+  showToast(t('toast.copyingOnboard'), 'info');
   const res = await api.copyOnboardToLocal({ profileIndex });
   if (!res.success) {
-    showToast(res.error || 'Copy failed', 'error');
+    showToast(res.error || t('toast.copyFailed'), 'error');
     return;
   }
   if (res.profileLibrary) state.profileLibrary = res.profileLibrary;
   renderProfileLibrary();
-  showToast('Copied to custom profiles. Keyboard was not changed.', 'success');
+  showToast(t('toast.copiedCustom'), 'success');
 }
 
 async function handleDeleteLocalProfile(key) {
   const res = await api.deleteLocalProfile(key);
   if (!res.success) {
-    showToast(res.error || 'Delete failed', 'error');
+    showToast(res.error || t('toast.deleteFailed'), 'error');
     return;
   }
   if (isLocalPreview() && state.editSource.key === key) {
@@ -1412,7 +1532,7 @@ async function handleDeleteLocalProfile(key) {
   }
   if (res.profileLibrary) state.profileLibrary = res.profileLibrary;
   renderProfileLibrary();
-  showToast('Custom configuration deleted', 'success');
+  showToast(t('toast.customDeleted'), 'success');
 }
 
 function appBindForProfile(profileIndex) {
@@ -1431,7 +1551,7 @@ function openAppBindDeleteDialog(bind) {
   const dialog = document.getElementById('app-bind-delete-dialog');
   const body = document.getElementById('app-bind-delete-body');
   if (body) {
-    body.textContent = 'This onboard profile is linked to a game/app. Deleting it will also remove the link. Delete?';
+    body.textContent = t('dialog.appBindDeleteBody');
   }
   if (dialog) dialog.hidden = false;
   const confirmBtn = document.getElementById('btn-app-bind-delete-confirm');
@@ -1446,23 +1566,23 @@ async function handleBindProfileApp(profileIndex) {
   const res = await api.bindProfileApp({ profileIndex });
   if (res && res.canceled) return;
   if (!res || !res.success) {
-    showToast(res && res.error ? res.error : 'Could not link that app', 'error');
+    showToast(res && res.error ? res.error : t('toast.linkAppFailed'), 'error');
     return;
   }
   state.appBinds = res.binds || [];
   renderProfileLibrary();
-  showToast(`Linked ${res.bind && res.bind.displayName ? res.bind.displayName : 'app'} to this onboard profile.`, 'success');
+  showToast(t('toast.linkedApp', { name: (res.bind && res.bind.displayName) || t('toast.genericApp') }), 'success');
 }
 
 async function handleUnbindProfileApp(profileIndex) {
   const res = await api.unbindProfileApp(profileIndex);
   if (!res || !res.success) {
-    showToast(res && res.error ? res.error : 'Could not unlink', 'error');
+    showToast(res && res.error ? res.error : t('toast.unlinkFailed'), 'error');
     return;
   }
   state.appBinds = res.binds || [];
   renderProfileLibrary();
-  if (res.changed) showToast('This onboard profile has been unlinked from the game/app.', 'info');
+  if (res.changed) showToast(t('toast.unlinkedApp'), 'info');
 }
 
 async function handleDeleteOnboardProfile(key) {
@@ -1473,18 +1593,18 @@ async function handleDeleteOnboardProfile(key) {
     if (!ok) return;
   }
   if (!(await flushLightingThen())) return;
-  setProfileBusy(true, 'Updating onboard profiles…');
+  setProfileBusy(true, t('sidebar.updatingOnboard'));
   try {
     const res = await api.deleteOnboardProfile(key);
     if (!res.success) {
-      showToast(res.error || 'Delete failed', 'error');
+      showToast(res.error || t('toast.deleteFailed'), 'error');
       return;
     }
     if (res.profileLibrary) state.profileLibrary = res.profileLibrary;
     if (Array.isArray(res.binds)) state.appBinds = res.binds;
     else if (res.autoUnbound) state.appBinds = (state.appBinds || []).filter((row) => row.profileIndex !== idx);
     renderProfileLibrary();
-    showToast(res.hardwareRollback === false && res.error ? res.error : 'Onboard profile removed', res.success ? 'success' : 'error');
+    showToast(res.hardwareRollback === false && res.error ? res.error : t('toast.onboardRemoved'), res.success ? 'success' : 'error');
   } finally {
     setProfileBusy(false);
   }
@@ -1492,17 +1612,17 @@ async function handleDeleteOnboardProfile(key) {
 
 async function handleMoveLocalToOnboard(sourceKey, targetKey, activate) {
   if (!(await flushLightingThen())) return;
-  setProfileBusy(true, 'Writing configuration to onboard, please wait…');
+  setProfileBusy(true, t('sidebar.writingWait'));
   try {
     const res = await api.moveLocalToOnboard({ sourceKey, targetKey: targetKey || null, activate });
     if (!res.success) {
-      showToast(res.error || 'Could not write onboard', 'error');
+      showToast(res.error || t('toast.writeOnboardFailed'), 'error');
       return;
     }
     if (res.profileLibrary) state.profileLibrary = res.profileLibrary;
     state.editSource = { kind: 'onboard', profileIndex: state.activeProfile };
     renderProfileLibrary();
-    showToast('Custom profile written to onboard', 'success');
+    showToast(t('toast.customWrittenOnboard'), 'success');
   } finally {
     setProfileBusy(false);
   }
@@ -1510,21 +1630,21 @@ async function handleMoveLocalToOnboard(sourceKey, targetKey, activate) {
 
 async function handleMoveOnboardToLocal(sourceKey) {
   if (!(await flushLightingThen())) return;
-  setProfileBusy(true, 'Moving onboard configuration to custom…');
+  setProfileBusy(true, t('sidebar.movingCustom'));
   try {
     const res = await api.moveOnboardToLocal({ sourceKey });
     if (!res.success) {
-      showToast(res.error || 'Move failed', 'error');
+      showToast(res.error || t('toast.moveFailed'), 'error');
       return;
     }
     if (res.profileLibrary) state.profileLibrary = res.profileLibrary;
     if (res.autoUnbound) {
       const idx = Number(String(sourceKey || '').split('@').pop());
       state.appBinds = (state.appBinds || []).filter((row) => row.profileIndex !== idx);
-      showToast('This onboard profile has been unlinked from the game/app.', 'info');
+      showToast(t('toast.unlinkedApp'), 'info');
     }
     renderProfileLibrary();
-    showToast('Moved to custom profiles', 'success');
+    showToast(t('toast.movedCustom'), 'success');
   } finally {
     setProfileBusy(false);
   }
@@ -1712,26 +1832,26 @@ async function handleLoadLocalPreview(key) {
   const res = await api.loadLocalProfilePreview(key);
   if (!loadRequestCurrent(captured)) return;
   if (!res.success) {
-    showToast(res.error || 'Could not load custom profile', 'error');
+    showToast(res.error || t('toast.loadCustomFailed'), 'error');
     return;
   }
   state.editSource = { kind: 'local', key };
   state.editGeneration += 1;
   hydrateFromSnapshot(res.item && res.item.data);
   renderProfileLibrary();
-  showToast('Previewing custom profile. The keyboard was not written.', 'success');
+  showToast(t('toast.previewingCustom'), 'success');
 }
 
 async function handleImportOfficialProfile() {
   const res = await api.importOfficialProfile();
   if (res.canceled) return;
   if (!res.success) {
-    showToast(res.error || 'Import failed', 'error');
+    showToast(res.error || t('toast.importFailed'), 'error');
     return;
   }
   if (res.profileLibrary) state.profileLibrary = res.profileLibrary;
   renderProfileLibrary();
-  showToast('Imported as a custom profile. Keyboard was not written.', 'success');
+  showToast(t('toast.importedCustom'), 'success');
 }
 
 async function handleExportOfficialProfile(key, kind, profile) {
@@ -1741,10 +1861,10 @@ async function handleExportOfficialProfile(key, kind, profile) {
   const res = await api.exportOfficialProfile(spec);
   if (res.canceled) return;
   if (!res.success) {
-    showToast(res.error || 'Export failed', 'error');
+    showToast(res.error || t('toast.exportFailed'), 'error');
     return;
   }
-  showToast('Official profile JSON exported', 'success');
+  showToast(t('toast.officialExported'), 'success');
 }
 
 /**
@@ -1752,122 +1872,156 @@ async function handleExportOfficialProfile(key, kind, profile) {
  * Uses exact physical coordinates (scale 42) from vendor definition.
  * Uses accessible button elements for keyboard accessibility (AX tree support).
  */
+const KEY_SCALE = 42;
+
+function buildKeyButton(key, idPrefix) {
+  const isLightingMode = idPrefix === 'light_';
+  const keyEl = document.createElement('button');
+  keyEl.type = 'button';
+  keyEl.className = 'kb-key';
+  keyEl.id = idPrefix ? `${idPrefix}${key.id}` : key.id;
+  keyEl.dataset.keyId = key.id;
+  keyEl.dataset.slot = String(key.slot);
+  keyEl.setAttribute('aria-label', `${key.name} (Slot ${key.slot})`);
+  keyEl.setAttribute('aria-pressed', 'false');
+
+  if (key.isKnob) {
+    keyEl.classList.add('knob-key');
+  }
+  if (key.isLightingZone) {
+    keyEl.classList.add('space-zone');
+  }
+
+  // Exact pixel coordinates
+  const leftPx = Math.round(key.x * KEY_SCALE);
+  const topPx = Math.round(key.y * KEY_SCALE);
+  let widthPx = Math.max(16, Math.round((key.w || 1) * KEY_SCALE - 4));
+  let heightPx = Math.max(16, Math.round((key.h || 1) * KEY_SCALE - 4));
+
+  if (key.isKnob) {
+    widthPx = Math.max(8, Math.round((key.w || 0.2857) * KEY_SCALE));
+    heightPx = Math.max(16, Math.round((key.h || 0.75) * KEY_SCALE));
+  }
+
+  keyEl.style.left = `${leftPx}px`;
+  keyEl.style.top = `${topPx}px`;
+  keyEl.style.width = `${widthPx}px`;
+  keyEl.style.height = `${heightPx}px`;
+
+  const labelSpan = document.createElement('span');
+  labelSpan.className = 'key-label';
+  keyEl.append(labelSpan);
+
+  keyEl.addEventListener('click', () => {
+    selectKey(key);
+    if (isLightingMode) {
+      const colorInput = document.getElementById('perkey-color-input');
+      const color = colorInput?.value || '#00E5FF';
+      state.stagedKeyColors[key.slot] = color;
+      state.changedKeyColors[key.slot] = color;
+      patchSlotKeyButtons(key.slot);
+      updateApplyButtonsState();
+      scheduleStillColorPersist();
+    }
+  });
+
+  if (!isLightingMode && idPrefix !== 'adv_') {
+    keyEl.addEventListener('dragover', (ev) => {
+      const payload = KeyConfig.readDragPayload(state.keyDragging, 'keyCode');
+      if (!payload.ok) return;
+      ev.preventDefault();
+      keyEl.classList.add('dragover');
+    });
+    keyEl.addEventListener('dragleave', () => {
+      keyEl.classList.remove('dragover');
+    });
+    keyEl.addEventListener('drop', (ev) => {
+      ev.preventDefault();
+      keyEl.classList.remove('dragover');
+      const payload = KeyConfig.readDragPayload(state.keyDragging, 'keyCode');
+      state.keyDragging = null;
+      if (!payload.ok) {
+        showToast(payload.error, 'warning');
+        return;
+      }
+      selectKey(key);
+      void commitBinding(payload.tuple, bindingLabel(payload.tuple));
+    });
+  }
+
+  return keyEl;
+}
+
+function patchKeyButton(keyEl, key, isLightingMode) {
+  if (!keyEl) return;
+  const customColor = state.stagedKeyColors[key.slot];
+  const hasColor = Boolean(customColor && customColor !== '#000000');
+  keyEl.style.borderColor = hasColor ? customColor : '';
+  keyEl.style.boxShadow = hasColor ? `0 0 6px ${customColor}` : '';
+  if (isLightingMode) {
+    keyEl.style.backgroundColor = hasColor ? customColor : '';
+    keyEl.style.color = hasColor ? '#000000' : '';
+  } else {
+    keyEl.style.backgroundColor = '';
+    keyEl.style.color = '';
+  }
+  const labelSpan = keyEl.firstElementChild;
+  const label = isLightingMode
+    ? key.name
+    : (state.layerKeymaps[state.activeLayer]?.[key.slot]?.label || key.name);
+  if (labelSpan && labelSpan.textContent !== label) labelSpan.textContent = label;
+  let dot = keyEl.querySelector('.key-color-dot');
+  if (hasColor && !isLightingMode) {
+    if (!dot) {
+      dot = document.createElement('span');
+      dot.className = 'key-color-dot';
+      keyEl.append(dot);
+    }
+    dot.style.backgroundColor = customColor;
+  } else if (dot) {
+    dot.remove();
+  }
+  const selected = key.id === state.selectedKeyId;
+  keyEl.classList.toggle('selected', selected);
+  keyEl.setAttribute('aria-pressed', selected ? 'true' : 'false');
+}
+
+function patchSlotKeyButtons(slot) {
+  const key = (state.layout?.keys || []).find((k) => k.slot === slot);
+  if (!key) return;
+  for (const [containerId, isLightingMode] of [['keyboard-keys-container', false], ['lighting-keys-container', true], ['advanced-keys-container', false]]) {
+    const container = document.getElementById(containerId);
+    const btn = container ? container.querySelector(`button[data-slot="${slot}"]`) : null;
+    if (btn) patchKeyButton(btn, key, isLightingMode);
+  }
+}
+
+// Grids are built once per layout and patched in place afterwards; a full
+// rebuild on every device-state broadcast cost 247 buttons and dropped focus.
+function populateContainer(container, keysList, idPrefix) {
+  if (!container) return;
+  const isLightingMode = idPrefix === 'light_';
+  const first = keysList[0];
+  const last = keysList[keysList.length - 1];
+  const signature = `${idPrefix}:${keysList.length}:${first ? first.id : ''}:${last ? last.id : ''}`;
+  if (container.dataset.keySig !== signature || container.childElementCount !== keysList.length) {
+    container.dataset.keySig = signature;
+    container.replaceChildren();
+    for (const key of keysList) {
+      container.append(buildKeyButton(key, idPrefix));
+    }
+  }
+  const children = container.children;
+  for (let i = 0; i < keysList.length; i++) {
+    patchKeyButton(children[i], keysList[i], isLightingMode);
+  }
+}
+
 function renderKeyboard() {
   const keymapContainer = document.getElementById('keyboard-keys-container');
   const lightingContainer = document.getElementById('lighting-keys-container');
   const advancedContainer = document.getElementById('advanced-keys-container');
   if (!state.layout || !state.layout.keys) return;
-
-  const SCALE = 42;
-
-  function populateContainer(container, keysList, idPrefix) {
-    if (!container) return;
-    container.replaceChildren();
-
-    for (const key of keysList) {
-      const keyEl = document.createElement('button');
-      keyEl.type = 'button';
-      keyEl.className = 'kb-key';
-      keyEl.id = idPrefix ? `${idPrefix}${key.id}` : key.id;
-      keyEl.dataset.keyId = key.id;
-      keyEl.dataset.slot = String(key.slot);
-      keyEl.setAttribute('aria-label', `${key.name} (Slot ${key.slot})`);
-
-      if (key.isKnob) {
-        keyEl.classList.add('knob-key');
-      }
-      if (key.isLightingZone) {
-        keyEl.classList.add('space-zone');
-      }
-
-      // Exact pixel coordinates
-      const leftPx = Math.round(key.x * SCALE);
-      const topPx = Math.round(key.y * SCALE);
-      let widthPx = Math.max(16, Math.round((key.w || 1) * SCALE - 4));
-      let heightPx = Math.max(16, Math.round((key.h || 1) * SCALE - 4));
-
-      if (key.isKnob) {
-        widthPx = Math.max(8, Math.round((key.w || 0.2857) * SCALE));
-        heightPx = Math.max(16, Math.round((key.h || 0.75) * SCALE));
-      }
-
-      keyEl.style.left = `${leftPx}px`;
-      keyEl.style.top = `${topPx}px`;
-      keyEl.style.width = `${widthPx}px`;
-      keyEl.style.height = `${heightPx}px`;
-
-      const isLightingMode = idPrefix === 'light_';
-      const customColor = state.stagedKeyColors[key.slot];
-      if (customColor && customColor !== '#000000') {
-        keyEl.style.borderColor = customColor;
-        keyEl.style.boxShadow = `0 0 6px ${customColor}`;
-        if (isLightingMode) {
-          keyEl.style.backgroundColor = customColor;
-          keyEl.style.color = '#000000';
-        }
-      }
-
-      const labelSpan = document.createElement('span');
-      labelSpan.className = 'key-label';
-
-      if (isLightingMode) {
-        labelSpan.textContent = key.name;
-      } else {
-        const assigned = state.layerKeymaps[state.activeLayer]?.[key.slot];
-        labelSpan.textContent = assigned?.label || key.name;
-      }
-      keyEl.append(labelSpan);
-
-      if (customColor && customColor !== '#000000' && !isLightingMode) {
-        const dot = document.createElement('span');
-        dot.className = 'key-color-dot';
-        dot.style.backgroundColor = customColor;
-        keyEl.append(dot);
-      }
-
-      if (key.id === state.selectedKeyId) {
-        keyEl.classList.add('selected');
-      }
-
-      keyEl.addEventListener('click', () => {
-        selectKey(key);
-        if (isLightingMode) {
-          const colorInput = document.getElementById('perkey-color-input');
-          const color = colorInput?.value || '#00E5FF';
-          state.stagedKeyColors[key.slot] = color;
-          state.changedKeyColors[key.slot] = color;
-          renderKeyboard();
-          scheduleStillColorPersist();
-        }
-      });
-
-      if (!isLightingMode && idPrefix !== 'adv_') {
-        keyEl.addEventListener('dragover', (ev) => {
-          const payload = KeyConfig.readDragPayload(state.keyDragging, 'keyCode');
-          if (!payload.ok) return;
-          ev.preventDefault();
-          keyEl.classList.add('dragover');
-        });
-        keyEl.addEventListener('dragleave', () => {
-          keyEl.classList.remove('dragover');
-        });
-        keyEl.addEventListener('drop', (ev) => {
-          ev.preventDefault();
-          keyEl.classList.remove('dragover');
-          const payload = KeyConfig.readDragPayload(state.keyDragging, 'keyCode');
-          state.keyDragging = null;
-          if (!payload.ok) {
-            showToast(payload.error, 'warning');
-            return;
-          }
-          selectKey(key);
-          void commitBinding(payload.tuple, bindingLabel(payload.tuple));
-        });
-      }
-
-      container.append(keyEl);
-    }
-  }
 
   populateContainer(keymapContainer, state.layout.keys, '');
   if (lightingContainer) {
@@ -1891,8 +2045,11 @@ function selectKey(key) {
   state.selectedKeyId = key.id;
   state.selectedKey = key;
 
+  // Element ids are prefixed per grid (light_/adv_); dataset.keyId is not.
   document.querySelectorAll('.kb-key').forEach(k => {
-    k.classList.toggle('selected', k.id === key.id);
+    const selected = k.dataset.keyId === key.id;
+    k.classList.toggle('selected', selected);
+    k.setAttribute('aria-pressed', selected ? 'true' : 'false');
   });
 
   const box = document.getElementById('inspector-key-box');
@@ -1918,24 +2075,26 @@ function selectKey(key) {
     }
   }
 
-  if (nameEl) nameEl.textContent = key.name + (key.isKnob ? ' (Rotary Knob)' : '');
+  if (nameEl) nameEl.textContent = key.name + (key.isKnob ? t('keymap.rotaryKnob') : '');
   if (infoEl) {
     infoEl.textContent = key.isKnob
-      ? 'Knob press can be remapped. The wheel is left unchanged.'
-      : (key.id === 'k_fn' ? 'Fn is not available for advanced bindings.' : '');
+      ? t('keymap.knobHint')
+      : (key.id === 'k_fn' ? t('keymap.fnHint') : '');
   }
   if (assignedEl) {
     if (assigned) {
       if (assigned.type === 112) {
-        const modeLabel = assigned.code2 === 1 ? 'Play Once' : (assigned.code2 === 255 ? 'Toggle Repeat' : 'Repeat Held');
-        assignedEl.textContent = `Assigned: Macro ${assigned.code1 + 1} (${modeLabel})`;
+        const modeLabel = assigned.code2 === 1
+          ? t('keymap.playOnce')
+          : (assigned.code2 === 255 ? t('keymap.toggleRepeat') : t('keymap.repeatHeld'));
+        assignedEl.textContent = t('keymap.assignedMacro', { n: assigned.code1 + 1, mode: modeLabel });
       } else if (assigned.type === 16 && assigned.code1 > 0) {
-        assignedEl.textContent = `Assigned: Chord ${assigned.label}`;
+        assignedEl.textContent = t('keymap.assignedChord', { label: assigned.label });
       } else {
-        assignedEl.textContent = `Assigned: ${assigned.label} (Code: ${assigned.code || assigned.code2})`;
+        assignedEl.textContent = t('keymap.assignedKey', { label: assigned.label, code: assigned.code || assigned.code2 });
       }
     } else {
-      assignedEl.textContent = 'Default Mapping';
+      assignedEl.textContent = t('keymap.defaultMapping');
     }
   }
   renderAdvancedPanel();
@@ -1947,11 +2106,11 @@ function selectKey(key) {
  */
 function assignMacroToSelected(slotIndex) {
   if (!state.selectedKey) {
-    showToast('Please select a key on the visual keyboard first.', 'warning');
+    showToast(t('toast.selectKeyFirst'), 'warning');
     return;
   }
   if (state.loadInFlight || !state.hasReadKeymap[state.activeLayer]) {
-    showToast(`Layer ${state.activeLayer} must be read from keyboard before editing.`, 'warning');
+    showToast(t('toast.layerMustBeRead', { layer: state.activeLayer }), 'warning');
     return;
   }
   const macroSlot = state.stagedMacros[slotIndex] || { type: 0 };
@@ -2012,7 +2171,7 @@ function renderPalette() {
   for (const cat of categories) {
     const tabBtn = document.createElement('button');
     tabBtn.className = `palette-cat-btn ${cat === state.paletteCategory ? 'active' : ''}`;
-    tabBtn.textContent = cat;
+    tabBtn.textContent = localizePaletteCategory(cat);
     tabBtn.dataset.category = cat;
     tabBtn.addEventListener('click', () => {
       state.paletteCategory = cat;
@@ -2029,7 +2188,7 @@ function renderPalette() {
       const mBtn = document.createElement('button');
       mBtn.className = 'palette-key-btn';
       mBtn.textContent = `M${i + 1}`;
-      mBtn.title = `Macro ${i + 1} (Type: ${slot.type || 0})`;
+      mBtn.title = t('palette.macroTitle', { n: i + 1, type: slot.type || 0 });
       mBtn.dataset.type = '112';
       mBtn.dataset.code1 = String(i);
       mBtn.dataset.code2 = String(slot.type || 0);
@@ -2081,7 +2240,7 @@ function renderPalette() {
 function assignKeyToSelected(remapItem) {
   if (!state.selectedKey) return;
   if (state.loadInFlight || !state.hasReadKeymap[state.activeLayer]) {
-    showToast(`Layer ${state.activeLayer} must be read from keyboard before editing.`, 'warning');
+    showToast(t('toast.layerMustBeRead', { layer: state.activeLayer }), 'warning');
     return;
   }
 
@@ -2092,7 +2251,7 @@ function assignKeyToSelected(remapItem) {
       "Holding this key for 3 seconds on hardware will restore keyboard factory settings."
     );
     if (!ok) {
-      showToast('Reset key assignment cancelled.', 'info');
+      showToast(t('toast.resetKeyCancelled'), 'info');
       return;
     }
   }
@@ -2211,12 +2370,12 @@ function setKeyLayer(layer) {
  */
 async function handleReadLayer() {
   const captured = { gen: state.editGeneration, resetEpoch: state.resetEpoch, profile: state.editingProfile, layer: state.activeLayer };
-  showToast(`Reading Layer ${captured.layer} from keyboard…`, 'info');
+  showToast(t('toast.readingLayer', { layer: captured.layer }), 'info');
   try {
     const res = await api.readLayer(captured.profile, captured.layer, false);
     if (!requestStillCurrent(captured)) return;
     if (res.success && Array.isArray(res.keys)) {
-      showToast(`Successfully read Layer ${captured.layer}`, 'success');
+      showToast(t('toast.readLayerOk', { layer: captured.layer }), 'success');
       const physical = new Set((state.layout?.keys || []).map((k) => k.slot));
       const newLayerMap = {};
 
@@ -2274,13 +2433,13 @@ async function handleReadLayer() {
     } else {
       state.hasReadKeymap[captured.layer] = false;
       updateApplyButtonsState();
-      showToast(`Failed to read layer: ${res.error}`, 'error');
+      showToast(t('toast.readLayerFailed', { error: res.error }), 'error');
     }
   } catch (err) {
     if (!requestStillCurrent(captured)) return;
     state.hasReadKeymap[captured.layer] = false;
     updateApplyButtonsState();
-    showToast(`Error reading layer: ${err.message}`, 'error');
+    showToast(t('toast.readLayerError', { error: err.message }), 'error');
   }
 }
 
@@ -2291,7 +2450,7 @@ async function handleReadLayer() {
 async function handleApplyKeymap() {
   if (isLocalPreview()) {
     const res = await persistLocalDraft();
-    showToast(res.success ? 'Saved to custom profile (keyboard not written).' : res.error, res.success ? 'success' : 'error');
+    showToast(res.success ? t('toast.savedCustom') : res.error, res.success ? 'success' : 'error');
     return;
   }
   if (state.loadInFlight || !state.hasReadKeymap[state.activeLayer]) return;
@@ -2302,11 +2461,11 @@ async function handleApplyKeymap() {
   const entries = Object.entries(currentLayerMap);
 
   if (entries.length === 0) {
-    showToast('No modified keys to write for this layer.', 'info');
+    showToast(t('toast.noModifiedKeys'), 'info');
     return;
   }
 
-  showToast(`Applying ${entries.length} remapped key(s) to Layer ${state.activeLayer}…`, 'info');
+  showToast(t('toast.applyingKeymap', { count: entries.length, layer: state.activeLayer }), 'info');
 
   const physical = new Set((state.layout?.keys || []).map((k) => k.slot));
   const updates = [];
@@ -2327,13 +2486,13 @@ async function handleApplyKeymap() {
     const res = await api.applyKeymap(captured.profile, captured.layer, updates);
     if (!requestStillCurrent(captured)) return;
     if (res.success) {
-      showToast(`Successfully applied ${updates.length} keys to Layer ${captured.layer} on edit-target Profile ${captured.profile + 1}!`, 'success');
+      showToast(t('toast.keymapApplied', { count: updates.length, layer: captured.layer, profile: captured.profile + 1 }), 'success');
     } else {
-      showToast(`Failed to apply keymap: ${res.error}`, 'error');
+      showToast(t('toast.applyKeymapFailed', { error: res.error }), 'error');
     }
   } catch (err) {
     if (!requestStillCurrent(captured)) return;
-    showToast(`Error applying keymap: ${err.message}`, 'error');
+    showToast(t('toast.applyKeymapError', { error: err.message }), 'error');
   }
 }
 
@@ -2427,7 +2586,7 @@ function clipboardExtrasFor(tuple) {
       ? MacroDraft.getNormalizedBodyKey(actions)
       : '';
     if (!bodyKey) {
-      return { error: 'Macro clipboard requires playback type and action identity' };
+      return { error: t('toast.macroClipboardRequires') };
     }
     const playbackType = Number.isInteger(slot && slot.type) ? slot.type : tuple.code2;
     return { extras: { macro: { playbackType, bodyKey } } };
@@ -2436,7 +2595,7 @@ function clipboardExtrasFor(tuple) {
   const size = KeyConfig.tableEntrySize(tuple.type);
   const bytes = KeyConfig.readTableEntryBytes(table, tuple.code1, size);
   if (!bytes) {
-    return { error: 'Advanced clipboard requires table content bytes' };
+    return { error: t('toast.advancedClipboardRequires') };
   }
   return { extras: { tableBytes: bytes } };
 }
@@ -2444,20 +2603,20 @@ function clipboardExtrasFor(tuple) {
 async function prepareProfileSwitch() {
   const drained = await keymapSaveGate.drain(20000);
   if (!drained) {
-    showToast('Still saving key bindings. Load for editing did not start.', 'warning');
+    showToast(t('toast.stillSavingKeysLoad'), 'warning');
     return false;
   }
   if (state.keymapSaveStatus === 'error' || state.keymapDirty) {
-    showToast(state.keymapSaveError || 'Unsaved key bindings could not be saved. Load for editing did not start.', 'error');
+    showToast(state.keymapSaveError || t('toast.unsavedKeysLoad'), 'error');
     return false;
   }
   const settingsDrained = await settingsSaveGate.drain(20000);
   if (!settingsDrained) {
-    showToast('Still saving performance settings. Load for editing did not start.', 'warning');
+    showToast(t('toast.stillSavingSettingsLoad'), 'warning');
     return false;
   }
   if (state.settingsSaveStatus === 'error' || state.settingsDraftDirty || PerformanceAutosave.hasDirty(state.settingsEdited)) {
-    showToast(state.settingsSaveError || 'Unsaved performance settings could not be saved. Load for editing did not start.', 'error');
+    showToast(state.settingsSaveError || t('toast.unsavedSettingsLoad'), 'error');
     return false;
   }
   return true;
@@ -2500,9 +2659,9 @@ function renderKeymapSaveStatus() {
   const el = document.getElementById('keymap-save-status');
   if (!el) return;
   const status = state.keymapSaveStatus || 'idle';
-  if (status === 'saving') el.textContent = 'Saving…';
-  else if (status === 'saved') el.textContent = isLocalPreview() ? 'Saved on this Mac' : 'Saved';
-  else if (status === 'error') el.textContent = state.keymapSaveError || 'Couldn’t save';
+  if (status === 'saving') el.textContent = t('status.saving');
+  else if (status === 'saved') el.textContent = isLocalPreview() ? t('status.savedLocal') : t('status.saved');
+  else if (status === 'error') el.textContent = state.keymapSaveError || t('status.saveFailed');
   else el.textContent = '';
 }
 
@@ -2529,21 +2688,21 @@ function renderKeyRecorder() {
   const btn = document.getElementById('btn-key-record');
   const code = KeyConfig.recorderLabel(state.keyRecorder);
   if (btn) {
-    btn.textContent = code === '112' ? 'Pause' : (code === '113' ? 'Resume' : 'Record');
+    btn.textContent = code === '112' ? t('keymap.pause') : (code === '113' ? t('keymap.resume') : t('keymap.record'));
     btn.disabled = Boolean(state.loadInFlight) || !state.hasReadKeymap[state.activeLayer] || !state.selectedKey;
   }
   const box = document.getElementById('key-record-capture');
   if (box) {
-    if (state.keyRecorder.active) box.textContent = 'Recording. Press modifiers then a key.';
-    else if (state.keyRecorder.hid || state.keyRecorder.mask) box.textContent = 'Paused. Resume to replace the chord.';
-    else box.textContent = 'Click here, then Record. Pause and Resume use the same button. There is no Cancel control.';
+    if (state.keyRecorder.active) box.textContent = t('keymap.recordingNow');
+    else if (state.keyRecorder.hid || state.keyRecorder.mask) box.textContent = t('keymap.recordingPaused');
+    else box.textContent = t('keymap.recordHint');
   }
 }
 
 function toggleKeyRecorder() {
   if (!KeyConfig) return;
   if (state.loadInFlight || !state.hasReadKeymap[state.activeLayer]) {
-    showToast(`Layer ${state.activeLayer} must be read from keyboard before editing.`, 'warning');
+    showToast(t('toast.layerMustBeRead', { layer: state.activeLayer }), 'warning');
     return;
   }
   state.keyRecorder = KeyConfig.toggleRecorder(state.keyRecorder || KeyConfig.emptyRecorder());
@@ -2692,11 +2851,11 @@ function persistBindingUpdates(layer, updates, options) {
 
 async function commitBinding(tuple, label, options) {
   if (!state.selectedKey) {
-    showToast('Please select a key on the visual keyboard first.', 'warning');
+    showToast(t('toast.selectKeyFirst'), 'warning');
     return { success: false };
   }
   if (state.loadInFlight || !state.hasReadKeymap[state.activeLayer]) {
-    showToast(`Layer ${state.activeLayer} must be read from keyboard before editing.`, 'warning');
+    showToast(t('toast.layerMustBeRead', { layer: state.activeLayer }), 'warning');
     return { success: false };
   }
   const slot = state.selectedKey.slot;
@@ -2713,8 +2872,8 @@ async function commitBinding(tuple, label, options) {
     code2: tuple.code2
   }], options);
   if (res.stale) return res;
-  if (!res.success) showToast(res.error || 'Couldn’t save key', 'error');
-  else if (isLocalPreview()) showToast('Saved to custom profile (keyboard not written).', 'success');
+  if (!res.success) showToast(res.error || t('toast.saveKeyFailed'), 'error');
+  else if (isLocalPreview()) showToast(t('toast.savedCustom'), 'success');
   return res;
 }
 
@@ -2722,7 +2881,7 @@ function handleCopyKey() {
   if (!state.selectedKey) return;
   const assigned = state.layerKeymaps[state.activeLayer]?.[state.selectedKey.slot];
   if (!assigned) {
-    showToast('Nothing to copy on this key.', 'info');
+    showToast(t('toast.nothingToCopyKey'), 'info');
     return;
   }
   const extrasRes = clipboardExtrasFor(assigned);
@@ -2736,13 +2895,13 @@ function handleCopyKey() {
     return;
   }
   state.keyClipboard = copied.clip;
-  showToast('Copied key binding.', 'success');
+  showToast(t('toast.copiedKey'), 'success');
 }
 
 async function handleCutKey() {
   if (!state.selectedKey) return;
   if (state.loadInFlight || !state.hasReadKeymap[state.activeLayer]) {
-    showToast(`Layer ${state.activeLayer} must be read from keyboard before editing.`, 'warning');
+    showToast(t('toast.layerMustBeRead', { layer: state.activeLayer }), 'warning');
     return;
   }
   const slot = state.selectedKey.slot;
@@ -2764,8 +2923,8 @@ async function handleCutKey() {
   state.keyClipboard = cut.clip;
   const def = defaultLayersFromLayout()[state.activeLayer]?.[slot];
   if (!def) {
-    showToast('Default tuple unavailable for this key.', 'error');
-    return { success: false, error: 'Default tuple unavailable for this key.' };
+    showToast(t('toast.defaultTupleUnavailable'), 'error');
+    return { success: false, error: t('toast.defaultTupleUnavailable') };
   }
   return commitBinding(def, bindingLabel(def));
 }
@@ -2778,10 +2937,10 @@ async function handlePasteKey() {
     destClipboardContext()
   );
   if (!pasted.ok) {
-    showToast(pasted.error || 'Clipboard is not a key binding.', 'warning');
+    showToast(pasted.error || t('toast.clipboardNotBinding'), 'warning');
     return {
       success: false,
-      error: pasted.error || 'Clipboard is not a key binding.',
+      error: pasted.error || t('toast.clipboardNotBinding'),
       rejectStage: pasted.rejectStage || 'pasteBinding',
       want: pasted.want,
       have: pasted.have
@@ -2812,11 +2971,11 @@ function openKeymapResetDialog() {
   if (state.loadInFlight) return;
   const anyRead = Object.values(state.hasReadKeymap).some(Boolean);
   if (!anyRead) {
-    showToast('Read a layer before restoring defaults.', 'warning');
+    showToast(t('toast.readLayerBeforeRestore'), 'warning');
     return;
   }
   if (!KeyConfig.isSomeKeyChanged(state.layerKeymaps, defaultLayersFromLayout(), cbSlotsForLayer, physicalSlotsList())) {
-    showToast('No remapped keys to restore.', 'info');
+    showToast(t('toast.noRemappedKeys'), 'info');
     return;
   }
   const dialog = document.getElementById('keymap-reset-dialog');
@@ -2856,7 +3015,7 @@ async function confirmKeymapResetDialog() {
         state.layerKeymaps[layer] = map;
         state.hasReadKeymap[layer] = true;
       } else {
-        showToast(`Could not read layer ${layer} before restore: ${res.error || 'read failed'}`, 'error');
+        showToast(t('toast.readLayerBeforeRestoreFailed', { layer, error: res.error || t('toast.readFailed') }), 'error');
         return;
       }
     }
@@ -2879,14 +3038,14 @@ async function confirmKeymapResetDialog() {
     if (plan.updates.length) {
       const res = await persistBindingUpdates(layer, plan.updates);
       if (!res.success) {
-        showToast(res.error || `Failed restoring layer ${layer}`, 'error');
+        showToast(res.error || t('toast.restoreLayerFailed', { layer }), 'error');
         return;
       }
     }
   }
   renderKeyboard();
   updateRestoreDefaultsButton();
-  showToast('Restored ordinary key defaults. Advanced bindings were left in place.', 'success');
+  showToast(t('toast.restoredDefaults'), 'success');
 }
 
 /**
@@ -3035,10 +3194,10 @@ function renderLightingSaveStatus() {
   if (!el) return;
   const status = state.lightingSaveStatus || 'idle';
   el.dataset.state = status;
-  if (status === 'saving') el.textContent = 'Saving…';
-  else if (status === 'saved') el.textContent = state.lightingMemoryBlocked ? 'Saved' : 'Saved';
-  else if (status === 'unsaved') el.textContent = 'Not saved';
-  else if (status === 'error') el.textContent = 'Couldn’t save';
+  if (status === 'saving') el.textContent = t('status.saving');
+  else if (status === 'saved') el.textContent = t('status.saved');
+  else if (status === 'unsaved') el.textContent = t('status.notSaved');
+  else if (status === 'error') el.textContent = t('status.saveFailed');
   else el.textContent = '';
   updateApplyButtonsState();
 }
@@ -3168,20 +3327,21 @@ async function runQueuedLightingSave() {
     });
   } catch (err) {
     res = { success: false, error: err.message || String(err) };
+  } finally {
+    if (captured.seq === state.lightingOpSeq) state.lightingOpInFlight = false;
   }
   if (!lightingSaveIdentityCurrent(captured) || captured.seq !== state.lightingOpSeq) {
     return false;
   }
-  state.lightingOpInFlight = false;
   if (!res || !res.success) {
     state.hasReadLighting = false;
     state.lightingDraftDirty = true;
     state.lightingSaveBlocked = true;
     state.lightingSaveStatus = 'error';
-    state.lightingSaveError = (res && res.error) || 'Lighting save failed';
+    state.lightingSaveError = (res && res.error) || t('toast.lightingSaveFailedShort');
     renderLightingSaveStatus();
     renderLightingControls();
-    showToast(`Couldn’t save lighting: ${state.lightingSaveError}`, 'error');
+    showToast(t('toast.saveLightingFailed', { error: state.lightingSaveError }), 'error');
     return false;
   }
   state.lightingEdited = LightingAutosave.settleEdited(state.lightingEdited, captured.patch, state.lighting);
@@ -3190,8 +3350,8 @@ async function runQueuedLightingSave() {
   if (res.lightMemory) adoptLightMemory(res.lightMemory);
   if (res.memorySaveFailed) {
     state.lightingMemoryBlocked = true;
-    state.lightingMemoryError = res.memoryError || 'Effect memory could not be saved';
-    showToast(`Lighting saved. Effect memory could not be saved: ${state.lightingMemoryError}`, 'warning', 8000);
+    state.lightingMemoryError = res.memoryError || t('toast.effectMemorySaveFailed');
+    showToast(t('toast.lightingSavedMemoryFailed', { error: state.lightingMemoryError }), 'warning', 8000);
   }
   if (state.lightingDraftDirty) {
     state.lightingSaveStatus = 'saving';
@@ -3227,7 +3387,7 @@ async function runQueuedLightingPref() {
     }
     if (!lightingSaveIdentityCurrent(captured) || captured.seq !== state.lightingPrefOpSeq) return;
     if (!res || !res.success) {
-      showToast((res && res.error) || 'Could not change remembered-effect storage.', 'error');
+      showToast((res && res.error) || t('toast.memoryStorageFailed'), 'error');
       let pref = null;
       try {
         pref = await api.getLightingMemoryPreference();
@@ -3275,7 +3435,7 @@ async function runQueuedLightingRead() {
   state.lightingReadQueued = false;
   updateApplyButtonsState();
   renderLightingControls();
-  showToast('Reading lighting settings from keyboard…', 'info');
+  showToast(t('toast.readingLighting'), 'info');
   try {
     let res;
     try {
@@ -3321,15 +3481,15 @@ async function runQueuedLightingRead() {
       renderLightingSaveStatus();
       showToast(
         state.lightingDraftDirty
-          ? 'Device lighting read. Unsaved edits were kept.'
-          : 'Lighting configuration refreshed from edit-target profile.',
+          ? t('toast.lightingReadKept')
+          : t('toast.lightingRefreshed'),
         'success'
       );
     } else {
       if (!state.lightingDraftDirty) state.hasReadLighting = false;
       updateApplyButtonsState();
       renderLightingControls();
-      showToast(`Failed to read lighting: ${res.error || 'unknown error'}`, 'error');
+      showToast(t('toast.readLightingFailed', { error: res.error || t('toast.unknownError') }), 'error');
     }
   } finally {
     if (captured.seq === state.lightingOpSeq) {
@@ -3370,13 +3530,13 @@ async function runQueuedLightingCalibration() {
       state.lightingSaveStatus = 'error';
       updateApplyButtonsState();
       renderLightingControls();
-      showToast(`Calibration apply failed: ${res.error || 'unknown error'}`, 'error');
+      showToast(t('toast.calibrationFailed', { error: res.error || t('toast.unknownError') }), 'error');
       return;
     }
     state.lighting.calibrationRgb = { r: rgb.r, g: rgb.g, b: rgb.b };
     updateApplyButtonsState();
     renderLightingControls();
-    showToast('LED white balance applied.', 'success');
+    showToast(t('toast.calibrationApplied'), 'success');
   } finally {
     if (captured.seq === state.lightingOpSeq) {
       state.lightingOpInFlight = false;
@@ -3543,11 +3703,7 @@ function renderLightingMemoryPref() {
     mac.disabled = !state.connected || state.lightingReadInFlight;
   }
   if (hint) {
-    let text = pref.hint || 'On the keyboard. A successful read does not prove writes.';
-    if (pref.recovered && pref.error) {
-      text = `Local lighting-memory file could not be read. The existing file was left unchanged. ${text}`;
-    }
-    hint.textContent = text;
+    hint.textContent = lightingMemoryHintText(pref);
   }
 }
 
@@ -3741,27 +3897,30 @@ async function runQueuedStillOp() {
     const captured = stillIdentitySnapshot();
     captured.seq = ++state.lightingOpSeq;
     state.lightingOpInFlight = true;
-    let res;
     try {
-      res = await api.updateStillFrames({
-        key: queued.key,
-        colors: queued.colors,
-        profileIndex: queued.profile,
-        applyDevice,
-        expectedKey: queued.key
-      });
-    } catch (err) {
-      res = { success: false, error: err.message || String(err) };
-    }
-    if (!stillIdentityCurrent(captured) || captured.seq !== state.lightingOpSeq) return;
-    state.lightingOpInFlight = false;
-    if (res && res.stillLibrary) adoptStillLibrary(res.stillLibrary);
-    if (!res || !res.success) {
-      showToast(`Couldn’t save still colors: ${(res && res.error) || 'unknown error'}`, 'error');
+      let res;
+      try {
+        res = await api.updateStillFrames({
+          key: queued.key,
+          colors: queued.colors,
+          profileIndex: queued.profile,
+          applyDevice,
+          expectedKey: queued.key
+        });
+      } catch (err) {
+        res = { success: false, error: err.message || String(err) };
+      }
+      if (!stillIdentityCurrent(captured) || captured.seq !== state.lightingOpSeq) return;
+      if (res && res.stillLibrary) adoptStillLibrary(res.stillLibrary);
+      if (!res || !res.success) {
+        showToast(t('toast.saveStillFailed', { error: (res && res.error) || t('toast.unknownError') }), 'error');
+        renderStillLibrary();
+        return;
+      }
       renderStillLibrary();
-      return;
+    } finally {
+      if (captured.seq === state.lightingOpSeq) state.lightingOpInFlight = false;
     }
-    renderStillLibrary();
     return;
   }
   if (queued.op !== 'select') return;
@@ -3770,33 +3929,36 @@ async function runQueuedStillOp() {
   const captured = stillIdentitySnapshot();
   captured.seq = ++state.lightingOpSeq;
   state.lightingOpInFlight = true;
-  let res;
   try {
-    res = await api.selectStill({
-      key: queued.key,
-      profileIndex: captured.profile,
-      applyCustom0: false
-    });
-  } catch (err) {
-    res = { success: false, error: err.message || String(err) };
-  }
-  if (!stillIdentityCurrent(captured) || captured.seq !== state.lightingOpSeq) return;
-  state.lightingOpInFlight = false;
-  if (res && res.stillLibrary) {
-    adoptStillLibrary(res.stillLibrary, {
-      confirmedPair: Array.isArray(res.pair)
-        ? res.pair
-        : (Array.isArray(res.selectedLightEffect) ? res.selectedLightEffect : undefined)
-    });
-  } else if (res && Array.isArray(res.pair)) {
-    adoptStillLibrary(null, { confirmedPair: res.pair });
-  }
-  if (!res || !res.success) {
-    showToast(`Couldn’t select still: ${(res && res.error) || 'unknown error'}`, 'error');
+    let res;
+    try {
+      res = await api.selectStill({
+        key: queued.key,
+        profileIndex: captured.profile,
+        applyCustom0: false
+      });
+    } catch (err) {
+      res = { success: false, error: err.message || String(err) };
+    }
+    if (!stillIdentityCurrent(captured) || captured.seq !== state.lightingOpSeq) return;
+    if (res && res.stillLibrary) {
+      adoptStillLibrary(res.stillLibrary, {
+        confirmedPair: Array.isArray(res.pair)
+          ? res.pair
+          : (Array.isArray(res.selectedLightEffect) ? res.selectedLightEffect : undefined)
+      });
+    } else if (res && Array.isArray(res.pair)) {
+      adoptStillLibrary(null, { confirmedPair: res.pair });
+    }
+    if (!res || !res.success) {
+      showToast(t('toast.selectStillFailed', { error: (res && res.error) || t('toast.unknownError') }), 'error');
+      renderLightingControls();
+      return;
+    }
     renderLightingControls();
-    return;
+  } finally {
+    if (captured.seq === state.lightingOpSeq) state.lightingOpInFlight = false;
   }
-  renderLightingControls();
 }
 
 function openStillNameDialog(mode, key) {
@@ -3810,8 +3972,8 @@ function openStillNameDialog(mode, key) {
   state.stillNameDialogMode = mode;
   state.stillNameDialogKey = key || null;
   state.stillNameDialogOpener = document.activeElement;
-  if (title) title.textContent = mode === 'rename' ? 'Rename' : 'Add Static';
-  if (confirm) confirm.textContent = mode === 'rename' ? 'Rename' : 'Add';
+  if (title) title.textContent = mode === 'rename' ? t('light.rename') : t('dialog.stillTitle');
+  if (confirm) confirm.textContent = mode === 'rename' ? t('light.rename') : t('dialog.add');
   const item = key ? stillItems().find((entry) => entry.key === key) : null;
   input.value = item ? item.name : '';
   if (err) {
@@ -3859,7 +4021,7 @@ async function confirmStillNameDialog() {
   if (mode === 'rename' && localSaved && !res.success) {
     closeStillNameDialog();
     if (identityOk) {
-      showToast((res && res.error) || 'Still was renamed locally. The selected name on the keyboard could not be updated.', 'error', 8000);
+      showToast((res && res.error) || t('toast.stillRenamedLocally'), 'error', 8000);
       renderLightingControls();
     }
     return;
@@ -3867,10 +4029,10 @@ async function confirmStillNameDialog() {
   if (!res || !res.success) {
     if (err) {
       err.hidden = false;
-      err.textContent = (res && res.error) || 'Couldn’t save the still name';
+      err.textContent = (res && res.error) || t('toast.saveStillNameFailed');
     }
     if (identityOk) {
-      showToast(`Couldn’t ${mode === 'rename' ? 'rename' : 'create'} still: ${(res && res.error) || 'unknown error'}`, 'error');
+      showToast(mode === 'rename' ? t('toast.renameStillFailed', { error: (res && res.error) || t('toast.unknownError') }) : t('toast.createStillFailed', { error: (res && res.error) || t('toast.unknownError') }), 'error');
     }
     return;
   }
@@ -3964,8 +4126,8 @@ async function handleDeleteStill(key) {
   if (!res || !res.success) {
     showToast(
       (res && res.error) || (localSaved
-        ? 'Still was deleted locally. The selected name on the keyboard could not be updated.'
-        : 'Couldn’t delete still'),
+        ? t('toast.stillDeletedLocally')
+        : t('toast.deleteStillFailed')),
       'error',
       localSaved ? 8000 : 3000
     );
@@ -4019,13 +4181,13 @@ function renderStillLibrary() {
     rename.type = 'button';
     rename.dataset.action = 'rename-still';
     rename.dataset.key = item.key;
-    rename.textContent = 'Rename';
+    rename.textContent = t('light.rename');
     rename.disabled = !editable;
     const del = document.createElement('button');
     del.type = 'button';
     del.dataset.action = 'delete-still';
     del.dataset.key = item.key;
-    del.textContent = 'Delete Effect';
+    del.textContent = t('light.deleteEffect');
     del.disabled = !editable;
     actions.append(rename, del);
     wrap.append(btn, actions);
@@ -4143,35 +4305,38 @@ async function runQueuedGifOp() {
   const captured = stillIdentitySnapshot();
   captured.seq = ++state.lightingOpSeq;
   state.lightingOpInFlight = true;
-  let res;
   try {
-    res = await api.selectGif({
-      key: queued.key,
-      profileIndex: captured.profile,
-      applyCustom0: false
-    });
-  } catch (err) {
-    res = { success: false, error: err.message || String(err) };
-  }
-  if (!stillIdentityCurrent(captured) || captured.seq !== state.lightingOpSeq) return;
-  state.lightingOpInFlight = false;
-  if (res && res.gifLibrary) {
-    adoptGifLibrary(res.gifLibrary, {
-      confirmedPair: Array.isArray(res.pair)
-        ? res.pair
-        : (Array.isArray(res.selectedLightEffect) ? res.selectedLightEffect : undefined)
-    });
-  } else if (res && Array.isArray(res.pair)) {
-    adoptGifLibrary(null, { confirmedPair: res.pair });
-  }
-  if (typeof res.isStreaming === 'boolean') state.isStreaming = res.isStreaming;
-  else if (res && res.success) state.isStreaming = true;
-  if (!res || !res.success) {
-    showToast(`Couldn’t select GIF: ${(res && res.error) || 'unknown error'}`, 'error');
+    let res;
+    try {
+      res = await api.selectGif({
+        key: queued.key,
+        profileIndex: captured.profile,
+        applyCustom0: false
+      });
+    } catch (err) {
+      res = { success: false, error: err.message || String(err) };
+    }
+    if (!stillIdentityCurrent(captured) || captured.seq !== state.lightingOpSeq) return;
+    if (res && res.gifLibrary) {
+      adoptGifLibrary(res.gifLibrary, {
+        confirmedPair: Array.isArray(res.pair)
+          ? res.pair
+          : (Array.isArray(res.selectedLightEffect) ? res.selectedLightEffect : undefined)
+      });
+    } else if (res && Array.isArray(res.pair)) {
+      adoptGifLibrary(null, { confirmedPair: res.pair });
+    }
+    if (typeof res.isStreaming === 'boolean') state.isStreaming = res.isStreaming;
+    else if (res && res.success) state.isStreaming = true;
+    if (!res || !res.success) {
+      showToast(t('toast.selectGifFailed', { error: (res && res.error) || t('toast.unknownError') }), 'error');
+      renderLightingControls();
+      return;
+    }
     renderLightingControls();
-    return;
+  } finally {
+    if (captured.seq === state.lightingOpSeq) state.lightingOpInFlight = false;
   }
-  renderLightingControls();
 }
 
 async function handleSelectGif(key) {
@@ -4208,8 +4373,8 @@ function openGifNameDialog(mode, key) {
   state.gifNameDialogMode = mode;
   state.gifNameDialogKey = key || null;
   state.gifNameDialogOpener = document.activeElement;
-  if (title) title.textContent = mode === 'rename' ? 'Rename GIF' : 'Name GIF';
-  if (confirm) confirm.textContent = mode === 'rename' ? 'Rename' : 'Save';
+  if (title) title.textContent = mode === 'rename' ? t('dialog.gifRename') : t('gif.nameTitle');
+  if (confirm) confirm.textContent = mode === 'rename' ? t('light.rename') : t('dialog.save');
   const item = key ? gifItems().find((entry) => entry.key === key) : null;
   input.value = item ? item.name : '';
   if (err) {
@@ -4253,7 +4418,7 @@ async function confirmGifNameDialog() {
   if (localSaved && !res.success) {
     closeGifNameDialog();
     if (identityOk) {
-      showToast((res && res.error) || 'GIF was renamed locally. The selected name on the keyboard could not be updated.', 'error', 8000);
+      showToast((res && res.error) || t('toast.gifRenamedLocally'), 'error', 8000);
       renderLightingControls();
     }
     return;
@@ -4261,10 +4426,10 @@ async function confirmGifNameDialog() {
   if (!res || !res.success) {
     if (err) {
       err.hidden = false;
-      err.textContent = (res && res.error) || 'Couldn’t save the GIF name';
+      err.textContent = (res && res.error) || t('toast.saveGifNameFailed');
     }
     if (identityOk) {
-      showToast(`Couldn’t rename GIF: ${(res && res.error) || 'unknown error'}`, 'error');
+      showToast(t('toast.renameGifFailed', { error: (res && res.error) || t('toast.unknownError') }), 'error');
     }
     return;
   }
@@ -4297,8 +4462,8 @@ async function handleDeleteGif(key) {
   if (!res || !res.success) {
     showToast(
       (res && res.error) || (localSaved
-        ? 'GIF was deleted locally. The selected name on the keyboard could not be updated.'
-        : 'Couldn’t delete GIF'),
+        ? t('toast.gifDeletedLocally')
+        : t('toast.deleteGifFailed')),
       'error',
       localSaved ? 8000 : 3000
     );
@@ -4319,7 +4484,7 @@ async function handleDeleteGif(key) {
 async function handleImportGifFile(file) {
   if (!canEditLighting() || !file) return;
   if (file.size > 5 * 1024 * 1024) {
-    showToast('GIF file size exceeds 5MB limit', 'error');
+    showToast(t('toast.gifTooBig'), 'error');
     return;
   }
   const pre = stillIdentitySnapshot();
@@ -4330,18 +4495,20 @@ async function handleImportGifFile(file) {
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const name = String(file.name || 'GIF').replace(/\.[Gg][Ii][Ff]$/, '');
-    res = await api.importGif({ name, buffer: Array.from(bytes) });
+    // The main process accepts typed arrays directly; Array.from would marshal
+    // millions of boxed numbers through structured clone.
+    res = await api.importGif({ name, buffer: bytes });
   } catch (err) {
     res = { success: false, error: err.message || String(err) };
   }
   if (!stillIdentityCurrent(captured)) return;
   if (res && res.gifLibrary) adoptGifLibrary(res.gifLibrary);
   if (!res || !res.success) {
-    showToast(`Couldn’t import GIF: ${(res && res.error) || 'unknown error'}`, 'error');
+    showToast(t('toast.importGifFailed', { error: (res && res.error) || t('toast.unknownError') }), 'error');
     renderLightingControls();
     return;
   }
-  showToast(`Imported ${(res.item && res.item.name) || 'GIF'}`, 'success');
+  showToast(t('toast.gifImported', { name: (res.item && res.item.name) || t('toast.genericGif') }), 'success');
   if (res.item && res.item.key) {
     await handleSelectGif(res.item.key);
     void openGifEditor(res.item.key);
@@ -4360,7 +4527,7 @@ async function handleGifPlayback(action) {
   }
   if (res && typeof res.playing === 'boolean') state.isStreaming = res.playing;
   if (!res || !res.success) {
-    showToast((res && res.error) || 'GIF playback could not be updated', 'error');
+    showToast((res && res.error) || t('toast.gifPlaybackFailed'), 'error');
   }
   renderGifLibrary();
 }
@@ -4419,10 +4586,10 @@ function renderGifEditor() {
   const err = document.getElementById('gif-editor-error');
   const previewBtn = document.getElementById('btn-gif-preview-toggle');
   if (name && document.activeElement !== name) name.value = editor.name;
-  if (info) info.textContent = `Frame ${editor.index + 1} / ${editor.frames.length}`;
+  if (info) info.textContent = t('gif.frameInfo', { n: editor.index + 1, total: editor.frames.length });
   const frame = editor.frames[editor.index] || { duration: 100, data: [] };
   if (duration && document.activeElement !== duration) duration.value = String(frame.duration || 100);
-  if (previewBtn) previewBtn.textContent = state.gifEditorPreviewTimer ? 'Stop Preview' : 'Preview';
+  if (previewBtn) previewBtn.textContent = state.gifEditorPreviewTimer ? t('light.stopPreview') : t('light.preview');
   if (err) {
     err.hidden = !editor.error;
     err.textContent = editor.error || '';
@@ -4600,12 +4767,12 @@ async function saveGifEditor() {
   if (!res || !res.success) {
     if (state.gifEditor) state.gifEditor.error = (res && res.error) || 'Couldn’t save GIF';
     renderGifEditor();
-    showToast(`Couldn’t save GIF: ${(res && res.error) || 'unknown error'}`, 'error');
+    showToast(t('toast.saveGifFailed', { error: (res && res.error) || t('toast.unknownError') }), 'error');
     return;
   }
   closeGifEditor();
   renderLightingControls();
-  showToast('GIF animation saved', 'success');
+  showToast(t('toast.gifSaved'), 'success');
 }
 
 function renderGifLibrary() {
@@ -4630,14 +4797,14 @@ function renderGifLibrary() {
   const canPlay = canEditLighting() && Boolean(selected) && state.editingProfile === state.activeProfile && !isLocalPreview();
   if (playBtn) {
     playBtn.disabled = !canPlay;
-    playBtn.textContent = state.isStreaming ? 'Pause' : 'Play';
+    playBtn.textContent = state.isStreaming ? t('light.pause') : t('light.play');
   }
   if (stopBtn) stopBtn.disabled = !canPlay || (!state.isStreaming && !selected);
   if (playStatus) {
-    if (!selected) playStatus.textContent = 'No GIF selected';
-    else if (state.editingProfile !== state.activeProfile) playStatus.textContent = 'Playback uses the active onboard profile';
-    else if (state.isStreaming) playStatus.textContent = `Streaming ${selected.name}`;
-    else playStatus.textContent = `${selected.name} paused`;
+    if (!selected) playStatus.textContent = t('gif.noSelection');
+    else if (state.editingProfile !== state.activeProfile) playStatus.textContent = t('gif.playbackActiveProfile');
+    else if (state.isStreaming) playStatus.textContent = t('gif.streaming', { name: selected.name });
+    else playStatus.textContent = t('gif.paused', { name: selected.name });
   }
   if (!list) return;
   list.replaceChildren();
@@ -4654,7 +4821,7 @@ function renderGifLibrary() {
     label.textContent = item.name;
     const meta = document.createElement('span');
     meta.className = 'gif-tile-meta';
-    meta.textContent = `${item.frameCount || (item.data && item.data.frames ? item.data.frames.length : 0)} frames`;
+    meta.textContent = t('gif.framesCount', { count: item.frameCount || (item.data && item.data.frames ? item.data.frames.length : 0) });
     btn.append(label, meta);
     const isSelected = state.selectedGifKey === item.key;
     btn.classList.toggle('active', isSelected);
@@ -4666,19 +4833,19 @@ function renderGifLibrary() {
     edit.type = 'button';
     edit.dataset.action = 'edit-gif';
     edit.dataset.key = item.key;
-    edit.textContent = 'Edit';
+    edit.textContent = t('light.edit');
     edit.disabled = !editable;
     const rename = document.createElement('button');
     rename.type = 'button';
     rename.dataset.action = 'rename-gif';
     rename.dataset.key = item.key;
-    rename.textContent = 'Rename';
+    rename.textContent = t('light.rename');
     rename.disabled = !editable;
     const del = document.createElement('button');
     del.type = 'button';
     del.dataset.action = 'delete-gif';
     del.dataset.key = item.key;
-    del.textContent = 'Delete';
+    del.textContent = t('light.delete');
     del.disabled = !editable;
     actions.append(edit, rename, del);
     wrap.append(btn, actions);
@@ -5023,7 +5190,7 @@ function handleRetryLightingSave() {
  */
 async function handleReadKeyColors() {
   const captured = { gen: state.editGeneration, resetEpoch: state.resetEpoch, profile: state.editingProfile };
-  showToast('Reading per-key RGB colors from keyboard (CMD 10)…', 'info');
+  showToast(t('toast.readingKeyColors'), 'info');
   try {
     const res = await api.readKeyColors(captured.profile);
     if (!requestStillCurrent(captured)) return;
@@ -5034,15 +5201,15 @@ async function handleReadKeyColors() {
       state.hasReadKeyColors = true;
       updateApplyButtonsState();
       renderKeyboard();
-      showToast(`Read ${res.colors.length} per-key RGB color slots from hardware!`, 'success');
+      showToast(t('toast.readKeyColorsOk', { count: res.colors.length }), 'success');
     } else {
       state.hasReadKeyColors = false;
       updateApplyButtonsState();
-      showToast(`Failed to read per-key RGB: ${res.error}`, 'error');
+      showToast(t('toast.readKeyColorsFailed', { error: res.error }), 'error');
     }
   } catch (err) {
     if (!requestStillCurrent(captured)) return;
-    showToast(`Error reading per-key RGB: ${err.message}`, 'error');
+    showToast(t('toast.readKeyColorsError', { error: err.message }), 'error');
   }
 }
 
@@ -5053,17 +5220,17 @@ async function handleReadKeyColors() {
 async function handleApplyKeyColors() {
   if (isLocalPreview()) {
     const res = await persistLocalDraft();
-    showToast(res.success ? 'Saved to custom profile (keyboard not written).' : res.error, res.success ? 'success' : 'error');
+    showToast(res.success ? t('toast.savedCustom') : res.error, res.success ? 'success' : 'error');
     return;
   }
   if (state.loadInFlight) return;
   const captured = { gen: state.editGeneration, resetEpoch: state.resetEpoch, profile: state.editingProfile };
   const patches = Object.keys(state.changedKeyColors).length > 0 ? state.changedKeyColors : state.stagedKeyColors;
   if (Object.keys(patches).length === 0) {
-    showToast('No key color changes to apply.', 'info');
+    showToast(t('toast.noKeyColorChanges'), 'info');
     return;
   }
-  showToast('Uploading per-key RGB colors to keyboard flash (CMD 11)…', 'info');
+  showToast(t('toast.uploadingKeyColors'), 'info');
   try {
     const res = await api.applyKeyColors(captured.profile, patches);
     if (!requestStillCurrent(captured)) return;
@@ -5071,20 +5238,20 @@ async function handleApplyKeyColors() {
       state.changedKeyColors = {};
       state.hasReadKeyColors = true;
       updateApplyButtonsState();
-      showToast('Per-key RGB colors successfully uploaded and verified!', 'success');
+      showToast(t('toast.keyColorsUploaded'), 'success');
     } else {
-      showToast(`Failed to apply per-key RGB: ${res.error}`, 'error');
+      showToast(t('toast.applyKeyColorsFailed', { error: res.error }), 'error');
     }
   } catch (err) {
     if (!requestStillCurrent(captured)) return;
-    showToast(`Error applying per-key RGB: ${err.message}`, 'error');
+    showToast(t('toast.applyKeyColorsError', { error: err.message }), 'error');
   }
 }
 
 function handleSetSelectedKeyColor() {
   if (!canEditKeyColors()) return;
   if (!state.selectedKey) {
-    showToast('Please select a key on the visual keyboard first.', 'warning');
+    showToast(t('toast.selectKeyFirst'), 'warning');
     return;
   }
   const colorInput = document.getElementById('perkey-color-input');
@@ -5092,9 +5259,9 @@ function handleSetSelectedKeyColor() {
   state.stagedKeyColors[state.selectedKey.slot] = color;
   state.changedKeyColors[state.selectedKey.slot] = color;
   updateApplyButtonsState();
-  renderKeyboard();
+  patchSlotKeyButtons(state.selectedKey.slot);
   scheduleStillColorPersist();
-  showToast(`Painted ${state.selectedKey.name} (Slot ${state.selectedKey.slot}) with ${color}`, 'info', 1500);
+  showToast(t('toast.paintedKey', { name: state.selectedKey.name, slot: state.selectedKey.slot, color }), 'info', 1500);
 }
 
 function handleFillAllKeyColors() {
@@ -5109,7 +5276,7 @@ function handleFillAllKeyColors() {
   updateApplyButtonsState();
   renderKeyboard();
   scheduleStillColorPersist();
-  showToast(`Filled all keys with ${color}`, 'info', 1500);
+  showToast(t('toast.filledAll', { color }), 'info', 1500);
 }
 
 function handleClearAllKeyColors() {
@@ -5122,7 +5289,7 @@ function handleClearAllKeyColors() {
   updateApplyButtonsState();
   renderKeyboard();
   scheduleStillColorPersist();
-  showToast('Cleared all keys to black (#000000)', 'info', 1500);
+  showToast(t('toast.clearedBlack'), 'info', 1500);
 }
 
 function ensureMacroSlotsDisplay() {
@@ -5133,11 +5300,11 @@ function ensureMacroSlotsDisplay() {
 
 function ensureMacrosEditable() {
   if (state.loadInFlight) {
-    showToast('Wait for the current device read to finish before editing macros.', 'warning');
+    showToast(t('toast.waitReadMacros'), 'warning');
     return false;
   }
   if (!state.hasReadMacros) {
-    showToast('Read macros from the keyboard before editing. Drafts start from the shared 16-slot memory.', 'warning');
+    showToast(t('toast.readMacrosFirst'), 'warning');
     return false;
   }
   if (state.isRecordingMacro) pauseMacroRecording('edit');
@@ -5175,18 +5342,18 @@ function syncMacroRecordControls() {
   const count = slot?.actions?.length || 0;
   if (recBtn) {
     if (state.isRecordingMacro) {
-      recBtn.textContent = 'Pause';
+      recBtn.textContent = t('macro.pause');
       recBtn.classList.remove('warning-subtle');
       recBtn.classList.add('danger-subtle');
     } else {
-      recBtn.textContent = count > 0 ? 'Resume' : 'Record';
+      recBtn.textContent = count > 0 ? t('macro.resume') : t('macro.record');
       recBtn.classList.remove('danger-subtle');
       recBtn.classList.add('warning-subtle');
     }
   }
   if (badge) {
     badge.hidden = !state.isRecordingMacro;
-    badge.textContent = 'Recording…';
+    badge.textContent = t('macro.recording');
   }
   const cap = captureSurface();
   if (cap) cap.hidden = !state.isRecordingMacro;
@@ -5327,7 +5494,7 @@ function renderMacroActions() {
       candidate[idx].delay = next;
       if (!MacroDraft.canMutateSlot(state.stagedMacros, state.activeMacroSlot, candidate)) {
         delayInput.value = String(act.delay || 0);
-        showToast('Changing delay would exceed the 8192-byte macro region.', 'error');
+        showToast(t('toast.delayExceeds'), 'error');
         return;
       }
       act.delay = next;
@@ -5397,7 +5564,7 @@ function appendMacroActions(slot, incoming) {
   if (!Array.isArray(slot.actions)) slot.actions = [];
   const candidate = slot.actions.concat(incoming);
   if (!MacroDraft.canMutateSlot(state.stagedMacros, state.activeMacroSlot, candidate)) {
-    showToast('Macro storage is full (8192-byte shared region).', 'error');
+    showToast(t('toast.macroFull'), 'error');
     return false;
   }
   for (let i = 0; i < incoming.length; i++) {
@@ -5448,7 +5615,7 @@ function handleAddMacroAction() {
   state.macroSelectedActionIndex = slot.actions.length - 1;
   updateApplyButtonsState();
   renderMacros();
-  showToast(`Added action to Macro ${state.activeMacroSlot + 1}`, 'info', 1500);
+  showToast(t('toast.addedAction', { n: state.activeMacroSlot + 1 }), 'info', 1500);
 }
 
 function handleRemoveMacroAction(idx) {
@@ -5457,13 +5624,13 @@ function handleRemoveMacroAction(idx) {
   if (!slot || !slot.actions) return;
   const at = Number.isInteger(idx) ? idx : state.macroSelectedActionIndex;
   if (!Number.isInteger(at) || at < 0 || at >= slot.actions.length) {
-    showToast('Select an action to delete.', 'warning');
+    showToast(t('toast.selectActionDelete'), 'warning');
     return;
   }
   const candidate = slot.actions.slice();
   candidate.splice(at, 1);
   if (!MacroDraft.canMutateSlot(state.stagedMacros, state.activeMacroSlot, candidate)) {
-    showToast('Deleting action would exceed the 8192-byte macro region due to diverging shared slots.', 'error');
+    showToast(t('toast.deleteExceeds'), 'error');
     return;
   }
   slot.actions = candidate;
@@ -5484,14 +5651,14 @@ function handleClearMacroSlot() {
   state.macroSelectedActionIndex = null;
   updateApplyButtonsState();
   renderMacros();
-  showToast(`Reset Macro ${state.activeMacroSlot + 1}`, 'info', 1500);
+  showToast(t('toast.resetMacro', { n: state.activeMacroSlot + 1 }), 'info', 1500);
 }
 
 function handleCopyMacroActions() {
   if (!ensureMacrosEditable()) return;
   const slot = state.stagedMacros[state.activeMacroSlot];
   if (!slot || !slot.actions || slot.actions.length === 0) {
-    showToast('Nothing to copy.', 'warning');
+    showToast(t('toast.nothingToCopy'), 'warning');
     return;
   }
   const idx = state.macroSelectedActionIndex;
@@ -5499,14 +5666,14 @@ function handleCopyMacroActions() {
     ? [slot.actions[idx]]
     : slot.actions;
   state.macroClipboard = MacroDraft.deepCopyActions(source);
-  showToast(`Copied ${state.macroClipboard.length} action(s).`, 'info', 1500);
+  showToast(t('toast.copiedActions', { count: state.macroClipboard.length }), 'info', 1500);
 }
 
 function handlePasteMacroActions() {
   if (!ensureMacrosEditable()) return;
   const copies = MacroDraft.deepCopyActions(state.macroClipboard);
   if (copies.length === 0) {
-    showToast('Clipboard is empty.', 'warning');
+    showToast(t('toast.clipboardEmpty'), 'warning');
     return;
   }
   const slot = state.stagedMacros[state.activeMacroSlot];
@@ -5518,14 +5685,14 @@ function handlePasteMacroActions() {
   const candidate = currentActions.slice();
   candidate.splice(at, 0, ...copies);
   if (!MacroDraft.canMutateSlot(state.stagedMacros, state.activeMacroSlot, candidate)) {
-    showToast('Paste would exceed the 8192-byte macro region.', 'error');
+    showToast(t('toast.pasteExceeds'), 'error');
     return;
   }
   slot.actions = candidate;
   state.macroSelectedActionIndex = at + copies.length - 1;
   updateApplyButtonsState();
   renderMacros();
-  showToast(`Pasted ${copies.length} action(s).`, 'info', 1500);
+  showToast(t('toast.pastedActions', { count: copies.length }), 'info', 1500);
 }
 
 function handleInsertMacroAction() {
@@ -5557,14 +5724,14 @@ function handleInsertMacroAction() {
   candidate.splice(at, 0, ...res.actions);
 
   if (!MacroDraft.canMutateSlot(state.stagedMacros, state.activeMacroSlot, candidate)) {
-    showToast('Macro storage is full (8192-byte shared region).', 'error');
+    showToast(t('toast.macroFull'), 'error');
     return;
   }
   slot.actions = candidate;
   state.macroSelectedActionIndex = at + res.actions.length - 1;
   updateApplyButtonsState();
   renderMacros();
-  showToast(`Inserted action into Macro ${state.activeMacroSlot + 1}`, 'info', 1500);
+  showToast(t('toast.insertedAction', { n: state.activeMacroSlot + 1 }), 'info', 1500);
 }
 
 function handleMoveMacroAction(delta) {
@@ -5572,7 +5739,7 @@ function handleMoveMacroAction(delta) {
   const slot = state.stagedMacros[state.activeMacroSlot];
   const idx = state.macroSelectedActionIndex;
   if (!slot || !slot.actions || !Number.isInteger(idx)) {
-    showToast('Select an action to reorder.', 'warning');
+    showToast(t('toast.selectActionReorder'), 'warning');
     return;
   }
   const next = idx + delta;
@@ -5581,7 +5748,7 @@ function handleMoveMacroAction(delta) {
   const [item] = candidate.splice(idx, 1);
   candidate.splice(next, 0, item);
   if (!MacroDraft.canMutateSlot(state.stagedMacros, state.activeMacroSlot, candidate)) {
-    showToast('Reordering action would exceed the 8192-byte macro region due to diverging shared slots.', 'error');
+    showToast(t('toast.reorderExceeds'), 'error');
     return;
   }
   slot.actions = candidate;
@@ -5595,7 +5762,7 @@ function handleReplaceMacroAction() {
   const slot = state.stagedMacros[state.activeMacroSlot];
   const idx = state.macroSelectedActionIndex;
   if (!slot || !slot.actions || !Number.isInteger(idx) || !slot.actions[idx]) {
-    showToast('Select an action to replace.', 'warning');
+    showToast(t('toast.selectActionReplace'), 'warning');
     return;
   }
   const typeSelect = document.getElementById('macro-new-type');
@@ -5607,24 +5774,24 @@ function handleReplaceMacroAction() {
   const replaced = MacroDraft.replaceActionAtIndex(candidate, idx, { actionType, code });
   if (!replaced) {
     if (actionType === 'mousedown' || actionType === 'mouseup') {
-      showToast('Invalid mouse button selected.', 'warning');
+      showToast(t('toast.invalidMouseButton'), 'warning');
     } else if (actionType === 'keydown' || actionType === 'keyup' || actionType === 'keypress') {
-      showToast('Invalid keyboard key selected.', 'warning');
+      showToast(t('toast.invalidKey'), 'warning');
     } else {
-      showToast('Invalid action type.', 'warning');
+      showToast(t('toast.invalidActionType'), 'warning');
     }
     return;
   }
 
   if (!MacroDraft.canMutateSlot(state.stagedMacros, state.activeMacroSlot, candidate)) {
-    showToast('Replacing action would exceed the 8192-byte macro region.', 'error');
+    showToast(t('toast.replaceExceeds'), 'error');
     return;
   }
 
   slot.actions = candidate;
   updateApplyButtonsState();
   renderMacros();
-  showToast(`Replaced action ${idx + 1}.`, 'info', 1500);
+  showToast(t('toast.replacedAction', { n: idx + 1 }), 'info', 1500);
 }
 
 function handleToggleMacroActionKind() {
@@ -5632,7 +5799,7 @@ function handleToggleMacroActionKind() {
   const slot = state.stagedMacros[state.activeMacroSlot];
   const idx = state.macroSelectedActionIndex;
   if (!slot || !slot.actions || !Number.isInteger(idx) || !slot.actions[idx]) {
-    showToast('Select an action to edit.', 'warning');
+    showToast(t('toast.selectActionEdit'), 'warning');
     return;
   }
   const candidate = MacroDraft.deepCopyActions(slot.actions);
@@ -5642,7 +5809,7 @@ function handleToggleMacroActionKind() {
   else if (act.action === 'mousedown') act.action = 'mouseup';
   else if (act.action === 'mouseup') act.action = 'mousedown';
   if (!MacroDraft.canMutateSlot(state.stagedMacros, state.activeMacroSlot, candidate)) {
-    showToast('Modifying action would exceed the 8192-byte macro region due to diverging shared slots.', 'error');
+    showToast(t('toast.modifyExceeds'), 'error');
     return;
   }
   slot.actions = candidate;
@@ -5655,7 +5822,7 @@ function handleToggleMacroActionKind() {
  */
 function handleAssignMacroToSelectedKey() {
   if (!state.selectedKey) {
-    showToast('Please select a physical key on the Keymap tab first.', 'warning');
+    showToast(t('toast.selectPhysicalKeyFirst'), 'warning');
     return;
   }
   assignMacroToSelected(state.activeMacroSlot);
@@ -5695,7 +5862,7 @@ function startMacroRecording() {
     cap.hidden = false;
     cap.focus({ preventScroll: true });
   }
-  showToast(`Recording into Macro ${state.macroRecordingSlot + 1}. Use the capture box.`, 'warning', 3500);
+  showToast(t('toast.recordingMacro', { n: state.macroRecordingSlot + 1 }), 'warning', 3500);
 }
 
 function flushMacroHeldInputs() {
@@ -5732,7 +5899,7 @@ function flushMacroHeldInputs() {
 
   // Preflight check candidate before modifying draft state
   if (!MacroDraft.canMutateSlot(state.stagedMacros, slotIdx, candidate, 0)) {
-    showToast('Not enough macro space to release held keys.', 'error');
+    showToast(t('toast.noSpaceForRelease'), 'error');
     return;
   }
 
@@ -5755,8 +5922,7 @@ function pauseMacroRecording(reason) {
   updateApplyButtonsState();
   const slot = state.stagedMacros[recordingSlotIndex()];
   const count = slot?.actions?.length || 0;
-  const why = reason && reason !== 'pause' ? ` (${reason})` : '';
-  showToast(`Paused recording${why}. Macro ${recordingSlotIndex() + 1} has ${count} action(s).`, 'success');
+  showToast(t('toast.pausedRecording', { n: recordingSlotIndex() + 1, count }), 'success');
 }
 
 function haltMacroRecording(reason) {
@@ -5802,9 +5968,9 @@ function recordCaptureEvent({ isDown, code, pressId, actionDown, actionUp, event
 
   if (!MacroDraft.canMutateSlot(state.stagedMacros, slotIdx, candidate, remainingReleases)) {
     if (isDown) {
-      showToast('Macro storage needs room for a matching release.', 'error');
+      showToast(t('toast.macroReleaseRoom'), 'error');
     } else {
-      showToast('Macro storage is full (8192-byte shared region).', 'error');
+      showToast(t('toast.macroFull'), 'error');
     }
     return false;
   }
@@ -5973,7 +6139,7 @@ function attachMacroListeners() {
 async function handleReadMacros() {
   haltMacroRecording('read');
   const captured = { gen: state.editGeneration, resetEpoch: state.resetEpoch };
-  showToast('Reading hardware macros from keyboard (CMD 12, 8192 bytes)…', 'info');
+  showToast(t('toast.readingMacros'), 'info');
   try {
     const res = await api.readMacros();
     if (!requestStillCurrent(captured)) return;
@@ -5982,15 +6148,15 @@ async function handleReadMacros() {
       state.hasReadMacros = true;
       updateApplyButtonsState();
       renderMacros();
-      showToast('Macros successfully read from hardware. Names stay on this computer.', 'success');
+      showToast(t('toast.macrosRead'), 'success');
     } else {
       invalidateMacroBank();
-      showToast(`Failed to read macros: ${res.error}`, 'error');
+      showToast(t('toast.readMacrosFailed', { error: res.error }), 'error');
     }
   } catch (err) {
     if (!requestStillCurrent(captured)) return;
     invalidateMacroBank();
-    showToast(`Error reading macros: ${err.message}`, 'error');
+    showToast(t('toast.readMacrosError', { error: err.message }), 'error');
   }
 }
 
@@ -6001,7 +6167,7 @@ async function handleApplyMacros() {
   if (isLocalPreview()) {
     haltMacroRecording('apply');
     const res = await persistLocalDraft();
-    showToast(res.success ? 'Saved to custom profile (keyboard not written).' : res.error, res.success ? 'success' : 'error');
+    showToast(res.success ? t('toast.savedCustom') : res.error, res.success ? 'success' : 'error');
     return;
   }
   haltMacroRecording('apply');
@@ -6012,21 +6178,21 @@ async function handleApplyMacros() {
   persistMacroMetadata();
   const snapshot = MacroDraft.hardwareMacroSlots(state.stagedMacros);
   if (MacroDraft.calculateMacroBankBytes(snapshot) > MacroDraft.SHARED_MACRO_SIZE) {
-    showToast('Macro storage is full (8192-byte shared region).', 'error');
+    showToast(t('toast.macroFull'), 'error');
     return;
   }
-  showToast('Uploading macros to keyboard flash storage (CMD 13, 8192 bytes)…', 'info');
+  showToast(t('toast.uploadingMacros'), 'info');
   try {
     const res = await api.applyMacros(snapshot);
     if (!requestStillCurrent(captured)) return;
     if (res.success) {
-      showToast('Macros uploaded. Playback-mode changes also update existing key bindings. Names stay in this app only.', 'success');
+      showToast(t('toast.macrosUploaded'), 'success');
     } else {
       showToast(formatPartialFailure(res), 'error', 8000);
     }
   } catch (err) {
     if (!requestStillCurrent(captured)) return;
-    showToast(`Error uploading macros: ${err.message}`, 'error');
+    showToast(t('toast.uploadMacrosError', { error: err.message }), 'error');
   }
 }
 
@@ -6043,7 +6209,10 @@ function formatSleepDurationLabel(sleepTime) {
 }
 
 function formatSleepLabel(sleepTime, neverSleep) {
-  return PerformanceAutosave.formatSleepLabel(sleepTime, neverSleep);
+  if (neverSleep) return t('perf.minutes', { n: 0 });
+  const raw = PerformanceAutosave.formatSleepDurationLabel(sleepTime);
+  if (/s$/i.test(String(raw)) && !/min/i.test(String(raw))) return raw;
+  return t('perf.minutes', { n: String(raw).replace(/\s*min$/i, '') });
 }
 
 function sleepSliderThumbMinutes(sleepTime) {
@@ -6094,10 +6263,10 @@ function renderSettingsSaveStatus() {
   if (el) {
     const status = state.settingsSaveStatus || 'idle';
     el.dataset.state = status;
-    if (status === 'saving') el.textContent = 'Saving…';
-    else if (status === 'saved') el.textContent = isLocalPreview() ? 'Saved on this Mac' : 'Saved';
-    else if (status === 'unsaved') el.textContent = 'Not saved';
-    else if (status === 'error') el.textContent = state.settingsSaveError || 'Couldn’t save';
+    if (status === 'saving') el.textContent = t('status.saving');
+    else if (status === 'saved') el.textContent = isLocalPreview() ? t('status.savedLocal') : t('status.saved');
+    else if (status === 'unsaved') el.textContent = t('status.notSaved');
+    else if (status === 'error') el.textContent = state.settingsSaveError || t('status.saveFailed');
     else el.textContent = '';
   }
   updateApplyButtonsState();
@@ -6220,7 +6389,7 @@ async function persistSettingsPatchNow(patch, capturedRevs, captured) {
       if (!settingsSaveIdentityCurrent(captured)) return { success: false, stale: true };
       if (!res || !res.success) {
         finishSettingsSave(false, sentRevs, (res && res.error) || 'Couldn’t save');
-        showToast(`Couldn’t save settings: ${(res && res.error) || 'unknown error'}`, 'error');
+        showToast(t('toast.saveSettingsFailed', { error: (res && res.error) || t('toast.unknownError') }), 'error');
         renderSettingsControls();
         return res || { success: false, error: 'Couldn’t save' };
       }
@@ -6237,7 +6406,7 @@ async function persistSettingsPatchNow(patch, capturedRevs, captured) {
     } catch (err) {
       if (!settingsSaveIdentityCurrent(captured)) return { success: false, stale: true };
       finishSettingsSave(false, sentRevs, err.message);
-      showToast(`Couldn’t save settings: ${err.message}`, 'error');
+      showToast(t('toast.saveSettingsFailed', { error: err.message }), 'error');
       renderSettingsControls();
       return { success: false, error: err.message };
     }
@@ -6291,9 +6460,9 @@ function renderSettingsControls() {
   if (pollingHint) {
     const currentRate = state.settings.reporteRate;
     if (editable && currentRate !== undefined && currentRate !== null && !isSupportedReportRate(currentRate)) {
-      pollingHint.textContent = 'The keyboard returned an unrecognized polling rate. It will be preserved unless you choose a rate above.';
+      pollingHint.textContent = t('perf.pollingRateUnrecognized');
     } else {
-      pollingHint.textContent = 'Higher keyboard polling rate reduces input delay.';
+      pollingHint.textContent = t('perf.pollingHint');
     }
   }
 
@@ -6312,7 +6481,7 @@ function renderSettingsControls() {
     }
     if (sleepVal) {
       if (draft != null && Number.isInteger(draft)) {
-        sleepVal.textContent = isNeverSleep && !dragging ? formatSleepLabel(state.settings.sleepTime, true) : `${draft} min`;
+        sleepVal.textContent = isNeverSleep && !dragging ? formatSleepLabel(state.settings.sleepTime, true) : t('perf.minutes', { n: draft });
       } else {
         sleepVal.textContent = formatSleepLabel(state.settings.sleepTime, isNeverSleep);
       }
@@ -6328,10 +6497,10 @@ function renderSettingsControls() {
   }
   if (lockWinHint) {
     if (isMac) {
-      lockWinHint.textContent = 'Mac mode is enabled. Win key lock is unavailable.';
+      lockWinHint.textContent = t('perf.lockWinHintMac');
       lockWinHint.style.color = 'var(--text-secondary)';
     } else {
-      lockWinHint.textContent = 'After turning it on, the Win key will be locked and cannot be used to prevent accidental touches during the game.';
+      lockWinHint.textContent = t('perf.lockWinHint');
       lockWinHint.style.color = '';
     }
   }
@@ -6494,7 +6663,7 @@ async function handleReadSettings() {
   const drained = await settingsSaveGate.drain(20000);
   if (!loadRequestCurrent(pre)) return;
   if (!drained) {
-    showToast('Still saving performance settings. Read did not start.', 'warning');
+    showToast(t('toast.stillSavingSettingsRead'), 'warning');
     return;
   }
   if (state.settingsReadInFlight) return;
@@ -6516,7 +6685,7 @@ async function handleReadSettings() {
 async function readSettingsNow(captured) {
   if (!requestStillCurrent(captured) || !loadRequestCurrent(captured)) return;
   const readRevs = Object.assign({}, state.settingsFieldRevs);
-  showToast('Reading settings from keyboard…', 'info');
+  showToast(t('toast.readingSettings'), 'info');
   try {
     const res = await api.readFuncConfig(captured.profile);
     if (!requestStillCurrent(captured)) return;
@@ -6552,19 +6721,19 @@ async function readSettingsNow(captured) {
       updateApplyButtonsState();
       renderSettingsControls();
       if (merged.skipped.length) {
-        showToast('Settings refreshed. Newer edits were kept.', 'success');
+        showToast(t('toast.settingsRefreshedKept'), 'success');
       } else {
-        showToast('Settings refreshed from edit-target profile.', 'success');
+        showToast(t('toast.settingsRefreshed'), 'success');
       }
     } else if (newer) {
       updateApplyButtonsState();
       renderSettingsControls();
-      showToast(`Failed to read settings: ${(res && res.error) || 'unknown error'}`, 'error');
+      showToast(t('toast.readSettingsFailed', { error: (res && res.error) || t('toast.unknownError') }), 'error');
     } else {
       state.hasReadSettings = false;
       updateApplyButtonsState();
       renderSettingsControls();
-      showToast(`Failed to read settings: ${(res && res.error) || 'unknown error'}`, 'error');
+      showToast(t('toast.readSettingsFailed', { error: (res && res.error) || t('toast.unknownError') }), 'error');
     }
   } catch (err) {
     if (!requestStillCurrent(captured)) return;
@@ -6572,7 +6741,7 @@ async function readSettingsNow(captured) {
     if (!newer) state.hasReadSettings = false;
     updateApplyButtonsState();
     renderSettingsControls();
-    showToast(`Failed to read settings: ${err.message}`, 'error');
+    showToast(t('toast.readSettingsFailed', { error: err.message }), 'error');
   }
 }
 
@@ -6592,15 +6761,20 @@ function resetDialogElements() {
   };
 }
 
-function resetDialogFocusables() {
-  const { dialog } = resetDialogElements();
+function modalFocusables(dialog) {
   if (!dialog) return [];
   return Array.from(dialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'))
     .filter((el) => !el.disabled && el.offsetParent !== null);
 }
 
-function trapResetDialogFocus(event) {
-  const nodes = resetDialogFocusables();
+function topmostVisibleDialog() {
+  const overlays = Array.from(document.querySelectorAll('.modal-overlay'))
+    .filter((el) => !el.hidden);
+  return overlays.length ? overlays[overlays.length - 1] : null;
+}
+
+function trapModalFocus(event, dialog) {
+  const nodes = modalFocusables(dialog);
   if (nodes.length === 0) return;
   const first = nodes[0];
   const last = nodes[nodes.length - 1];
@@ -6647,58 +6821,63 @@ function closeResetDialog() {
   }
 }
 
+function applyResetDialogCopy(scope, review) {
+  const { title, body, exportNote, confirm } = resetDialogElements();
+  const activeLabel = t('profile.fallbackName', { n: review.activeProfileIndex + 1 });
+  const editLabel = t('profile.fallbackName', { n: review.editingProfileIndex + 1 });
+  if (title) {
+    title.textContent = scope === 'all'
+      ? t('reset.titleAll')
+      : t('reset.titleActive', { name: activeLabel });
+  }
+  const lines = [];
+  if (scope === 'all') {
+    lines.push(t('reset.bodyAll', { name: activeLabel }));
+  } else {
+    lines.push(t('reset.bodyActive', { name: activeLabel }));
+  }
+  if (scope === 'active' && review.editingDiffersFromActive) {
+    lines.push(t('reset.editingDiffers', { name: editLabel }));
+  }
+  lines.push(t('reset.cancelSafe'));
+  if (body) body.textContent = lines.join(' ');
+  if (exportNote) {
+    exportNote.textContent = scope === 'all'
+      ? t('reset.exportNoteAll')
+      : t('reset.exportNoteActive');
+  }
+  if (confirm) confirm.textContent = scope === 'all' ? t('reset.confirmAll') : t('reset.confirmActive', { name: activeLabel });
+}
+
 async function openResetReview(scope) {
   if (state.resetCommitInFlight || state.resetDialogOpen) return;
   if (!state.connected) {
-    showToast('Cannot reset: keyboard is not connected', 'warning');
+    showToast(t('toast.resetNotConnected'), 'warning');
     return;
   }
   if (!api.prepareFactoryReset) {
-    showToast('Factory reset is unavailable in this build', 'error');
+    showToast(t('toast.resetUnavailable'), 'error');
     return;
   }
   const opener = document.activeElement;
   const fallbackOpener = document.getElementById(scope === 'all' ? 'btn-reset-all' : 'btn-reset-active');
-  showToast('Reading the profile currently active on the keyboard…', 'info');
+  showToast(t('toast.readingActiveProfile'), 'info');
   try {
     const review = await api.prepareFactoryReset(scope);
     if (!review || !review.success) {
-      showToast(`Cannot prepare reset: ${review && review.error ? review.error : 'unknown error'}`, 'error');
+      showToast(t('toast.prepareResetFailed', { error: review && review.error ? review.error : t('toast.unknownError') }), 'error');
       return;
     }
-    state.resetReview = review;
+    state.resetReview = { ...review, scope };
     state.resetDialogOpener = (opener && opener.id && document.contains(opener)) ? opener : fallbackOpener;
-    const { dialog, title, body, exportNote, cancel, confirm } = resetDialogElements();
-    const activeLabel = `Profile ${review.activeProfileIndex + 1}`;
-    const editLabel = `Profile ${review.editingProfileIndex + 1}`;
-    if (title) {
-      title.textContent = scope === 'all'
-        ? 'Reset all onboard profiles?'
-        : `Reset active profile (${activeLabel})?`;
-    }
-    const lines = [];
-    if (scope === 'all') {
-      lines.push(`This will reset every onboard profile, including ${activeLabel} which is currently active on the keyboard. Local drafts will be discarded.`);
-    } else {
-      lines.push(`This will reset ${activeLabel}, the profile currently active on the keyboard. Local drafts will be discarded.`);
-    }
-    if (scope === 'active' && review.editingDiffersFromActive) {
-      lines.push(`You are editing ${editLabel}, which is not the reset target.`);
-    }
-    lines.push('Cancel leaves the keyboard unchanged.');
-    if (body) body.textContent = lines.join(' ');
-    if (exportNote) {
-      exportNote.textContent = scope === 'all'
-        ? 'Export saves one onboard profile per file, not the whole keyboard. Export each profile separately if you need copies of all of them.'
-        : 'Export saves this one profile only. It is not a backup of the whole keyboard.';
-    }
-    if (confirm) confirm.textContent = scope === 'all' ? 'Reset all profiles' : `Reset ${activeLabel}`;
+    applyResetDialogCopy(scope, review);
+    const { dialog, cancel } = resetDialogElements();
     if (dialog) dialog.hidden = false;
     state.resetDialogOpen = true;
     syncResetChrome();
     if (cancel) cancel.focus();
   } catch (err) {
-    showToast(`Failed to prepare reset: ${err.message}`, 'error');
+    showToast(t('toast.prepareResetError', { error: err.message }), 'error');
   }
 }
 
@@ -6707,7 +6886,7 @@ async function exportFromResetDialog() {
   const review = state.resetReview;
   if (!review) return;
   const target = Number.isInteger(review.activeProfileIndex) ? review.activeProfileIndex : state.editingProfile;
-  showToast(`Exporting Profile ${target + 1} only — not a backup of the whole keyboard.`, 'info');
+  showToast(t('toast.exportingOneProfile', { n: target + 1 }), 'info');
   await handleExportProfile(target);
 }
 
@@ -6740,33 +6919,25 @@ async function confirmResetDialog() {
     closeResetDialog();
     if (res && res.success) {
       let msg = review.scope === 'all'
-        ? 'All onboard profiles were reset. Local drafts were discarded. Read the keyboard before editing.'
-        : `Profile ${review.activeProfileIndex + 1} was reset. Local drafts were discarded. Read the keyboard before editing.`;
+        ? t('toast.resetAllDone')
+        : t('toast.resetProfileDone', { n: review.activeProfileIndex + 1 });
       if (res.localCleanup === 'failed' || res.metadataError) {
-        msg += ` ${res.localCleanupHint || 'Saved macro names on this computer could not be cleared. You can rename them here.'}`;
+        msg += ` ${res.localCleanupHint || t('toast.resetCleanupFailed')}`;
         showToast(msg, 'warning', 8000);
       } else {
-        if (res.metadataCleared) msg += ' Saved macro names on this computer were cleared.';
+        if (res.metadataCleared) msg += ` ${t('toast.resetMetadataCleared')}`;
         showToast(msg, 'success', 6000);
       }
     } else if (res && res.uncertain) {
-      showToast(
-        'The reset may have already happened, but this app could not confirm it. Do not try again automatically. Reconnect and read the keyboard; do not put the old settings back.',
-        'warning',
-        8000
-      );
+      showToast(t('toast.resetUnconfirmed'), 'warning', 8000);
     } else {
-      showToast(`Factory reset did not run: ${res && res.error ? res.error : 'unknown error'}`, 'error', 6000);
+      showToast(t('toast.resetDidNotRun', { error: res && res.error ? res.error : t('toast.unknownError') }), 'error', 6000);
     }
   } catch (err) {
     applyResetInvalidation('factory-reset-ipc-error');
     state.resetCommitInFlight = false;
     closeResetDialog();
-    showToast(
-      `The reset result is unconfirmed: ${err.message}. Do not try again automatically. Read the keyboard; do not put the old settings back.`,
-      'error',
-      8000
-    );
+    showToast(t('toast.resetUnconfirmedError', { error: err.message }), 'error', 8000);
   } finally {
     state.resetCommitInFlight = false;
     syncResetChrome();
@@ -6787,27 +6958,84 @@ function firmwareDialogElements() {
   };
 }
 
+function firmwareRecoveryDialogElements() {
+  return {
+    dialog: document.getElementById('firmware-recovery-dialog'),
+    title: document.getElementById('firmware-recovery-dialog-title'),
+    body: document.getElementById('firmware-recovery-dialog-body'),
+    cancel: document.getElementById('btn-firmware-recovery-cancel'),
+    confirm: document.getElementById('btn-firmware-recovery-confirm')
+  };
+}
+
+function firmwareDialogBusy() {
+  return Boolean(state.firmwareCommitInFlight || state.firmwareDialogOpen || state.firmwareRecoveryDialogOpen);
+}
+
 function syncFirmwareChrome() {
   const busy = Boolean(state.firmwareCommitInFlight);
-  const open = Boolean(state.firmwareDialogOpen);
+  const open = Boolean(state.firmwareDialogOpen || state.firmwareRecoveryDialogOpen);
   const choose = document.getElementById('btn-firmware-choose');
   const reviewBtn = document.getElementById('btn-firmware-review');
+  const resumeBtn = document.getElementById('btn-firmware-resume');
+  const discardBtn = document.getElementById('btn-firmware-discard');
   const { dialog, cancel, confirm } = firmwareDialogElements();
+  const recovery = firmwareRecoveryDialogElements();
   if (dialog) {
     if (busy) dialog.setAttribute('aria-busy', 'true');
     else dialog.removeAttribute('aria-busy');
   }
+  if (recovery.dialog) {
+    if (busy) recovery.dialog.setAttribute('aria-busy', 'true');
+    else recovery.dialog.removeAttribute('aria-busy');
+  }
   if (cancel) cancel.disabled = busy;
   if (confirm) confirm.disabled = busy;
+  if (recovery.cancel) recovery.cancel.disabled = busy;
+  if (recovery.confirm) recovery.confirm.disabled = busy;
   if (choose) choose.disabled = busy || open;
   if (reviewBtn) reviewBtn.disabled = busy || open;
+  if (resumeBtn) resumeBtn.disabled = busy || open;
+  if (discardBtn) discardBtn.disabled = busy || open;
 }
 
 function formatFirmwareBoot(boot) {
-  if (!boot) return '';
+  if (!boot) return t('firmware.bootUnavailable');
   const vid = Number(boot.vendorId).toString(16).padStart(4, '0');
   const pid = Number(boot.productId).toString(16).padStart(4, '0');
-  return `Boot identity VID 0x${vid} PID 0x${pid} usagePage ${boot.usagePage} usage ${boot.usage}`;
+  return t('firmware.bootIdentity', {
+    vid,
+    pid,
+    usagePage: boot.usagePage,
+    usage: boot.usage
+  });
+}
+
+function firmwareKindLabel(kind) {
+  return kind === 'keyboard' ? t('firmware.kindKeyboardMcu') : t('firmware.kindReceiverRf');
+}
+
+function applyFirmwareReviewDialogCopy() {
+  const review = state.firmwareReview;
+  if (!review) return;
+  const { title, body, hash, size, boot, mode } = firmwareDialogElements();
+  const kindLabel = firmwareKindLabel(review.target && review.target.kind);
+  if (title) title.textContent = t('firmware.reviewTitle', { kind: kindLabel });
+  const current = review.currentVersion || {};
+  const pkg = review.package || {};
+  if (body) {
+    body.textContent = t('firmware.reviewDetail', {
+      kind: kindLabel,
+      mcu: current.firmwareVersion || '--',
+      rf: current.rfFirmwareVersion || '--',
+      version: pkg.version || '--',
+      fileName: pkg.fileName || t('others.package')
+    });
+  }
+  if (hash) hash.textContent = t('firmware.hash', { hash: pkg.sha256 || '--' });
+  if (size) size.textContent = t('firmware.size', { size: pkg.size || '--' });
+  if (boot) boot.textContent = formatFirmwareBoot(review.boot);
+  if (mode) mode.textContent = review.modeRule ? review.modeRule.error : '';
 }
 
 function renderFirmwarePanel(status) {
@@ -6824,24 +7052,29 @@ function renderFirmwarePanel(status) {
   if (mcu) mcu.textContent = versions.firmwareVersion || state.info?.firmwareVersion || '--';
   if (rf) rf.textContent = versions.rfFirmwareVersion || state.info?.rfFirmwareVersion || '--';
   if (target) {
-    if (!info.connected) target.textContent = 'Connect a G75 V2';
-    else if (info.target && info.target.kind === 'keyboard') target.textContent = 'Keyboard MCU (wired USB)';
-    else if (info.target && info.target.kind === 'receiver') target.textContent = 'Receiver RF (2.4G)';
-    else target.textContent = info.targetError || 'Unknown target';
+    if (!info.connected) target.textContent = t('firmware.connectDevice');
+    else if (info.target && info.target.kind === 'keyboard') target.textContent = t('firmware.targetKeyboardUsb');
+    else if (info.target && info.target.kind === 'receiver') target.textContent = t('firmware.targetReceiverRf');
+    else target.textContent = info.targetError || t('firmware.unknownTarget');
   }
   if (pkg) {
     pkg.textContent = info.selectedPackage
-      ? `${info.selectedPackage.fileName} (${info.selectedPackage.size} bytes)`
-      : 'None selected';
+      ? t('firmware.packageSelected', { name: info.selectedPackage.fileName, size: info.selectedPackage.size })
+      : t('others.noneSelected');
   }
-  if (mode) mode.textContent = info.modeRule ? info.modeRule.error : '';
+  if (mode) {
+    const reason = info.modeRule && info.modeRule.reason;
+    if (reason === 'require-wired') mode.textContent = t('firmware.requireWired');
+    else if (reason === 'require-wireless') mode.textContent = t('firmware.requireWireless');
+    else mode.textContent = info.modeRule ? info.modeRule.error : '';
+  }
   if (statusEl) {
     if (info.lastOutcome && info.lastOutcome.success) {
-      statusEl.textContent = 'Firmware update finished. Version readback and configuration restore were verified in this app. Physical flash remains unproven.';
+      statusEl.textContent = t('toast.firmwareFinished');
     } else if (info.lastOutcome && info.lastOutcome.error) {
       statusEl.textContent = info.lastOutcome.error;
     } else if (info.inProgress) {
-      statusEl.textContent = 'Firmware update is running.';
+      statusEl.textContent = t('firmware.updateRunning');
     } else {
       statusEl.textContent = '';
     }
@@ -6870,23 +7103,23 @@ async function refreshFirmwarePanel() {
 }
 
 async function handleChooseFirmwarePackage(spec) {
-  if (state.firmwareCommitInFlight || state.firmwareDialogOpen) return;
+  if (firmwareDialogBusy()) return;
   if (!api.chooseFirmwarePackage) {
-    showToast('Firmware update is unavailable in this build', 'error');
+    showToast(t('toast.firmwareUnavailable'), 'error');
     return;
   }
   try {
     const picked = await api.chooseFirmwarePackage(spec || {});
     if (picked && picked.canceled) return;
     if (!picked || !picked.success) {
-      showToast(`Cannot use that firmware package: ${picked && picked.error ? picked.error : 'unknown error'}`, 'error');
+      showToast(t('toast.firmwarePackageRejected', { error: picked && picked.error ? picked.error : t('toast.unknownError') }), 'error');
       await refreshFirmwarePanel();
       return;
     }
-    showToast(`Selected ${picked.fileName} (${picked.size} bytes). Review before updating.`, 'info');
+    showToast(t('toast.firmwarePackageSelected', { name: picked.fileName, size: picked.size }), 'info');
     await refreshFirmwarePanel();
   } catch (err) {
-    showToast(`Failed to choose firmware package: ${err.message}`, 'error');
+    showToast(t('toast.choosePackageFailed', { error: err.message }), 'error');
   }
 }
 
@@ -6894,6 +7127,7 @@ function closeFirmwareDialog() {
   if (state.firmwareCommitInFlight) return;
   const { dialog } = firmwareDialogElements();
   state.firmwareDialogOpen = false;
+  state.firmwareReview = null;
   if (dialog) {
     dialog.hidden = true;
     dialog.removeAttribute('aria-busy');
@@ -6910,7 +7144,7 @@ function closeFirmwareDialog() {
 }
 
 async function openFirmwareReview() {
-  if (state.firmwareCommitInFlight || state.firmwareDialogOpen) return;
+  if (firmwareDialogBusy()) return;
   if (!state.connected && typeof api.getState === 'function') {
     try {
       const fresh = await api.getState();
@@ -6918,42 +7152,33 @@ async function openFirmwareReview() {
     } catch {}
   }
   if (!state.connected) {
-    showToast('Cannot update firmware: keyboard is not connected', 'warning');
+    showToast(t('toast.firmwareNotConnected'), 'warning');
     return;
   }
   if (!api.reviewFirmware) {
-    showToast('Firmware update is unavailable in this build', 'error');
+    showToast(t('toast.firmwareUnavailable'), 'error');
     return;
   }
   const opener = document.activeElement;
   const fallbackOpener = document.getElementById('btn-firmware-review');
-  showToast('Reviewing the connected device and firmware package…', 'info');
+  showToast(t('toast.reviewingFirmware'), 'info');
   try {
     const review = await api.reviewFirmware();
     await refreshFirmwarePanel();
     if (!review || !review.success) {
-      showToast(`Cannot review firmware: ${review && review.error ? review.error : 'unknown error'}`, 'error');
+      showToast(t('toast.reviewFirmwareFailed', { error: review && review.error ? review.error : t('toast.unknownError') }), 'error');
       return;
     }
     state.firmwareDialogOpener = (opener && opener.id && document.contains(opener)) ? opener : fallbackOpener;
-    const { dialog, title, body, hash, size, boot, mode, cancel } = firmwareDialogElements();
-    const kindLabel = review.target && review.target.kind === 'keyboard' ? 'keyboard MCU' : 'receiver RF';
-    if (title) title.textContent = `Review ${kindLabel} firmware update`;
-    const current = review.currentVersion || {};
-    const pkg = review.package || {};
-    if (body) {
-      body.textContent = `This will update the connected ${kindLabel} from MCU ${current.firmwareVersion || '--'} / RF ${current.rfFirmwareVersion || '--'} to catalog ${pkg.version || '--'} (${pkg.fileName || 'package'}).`;
-    }
-    if (hash) hash.textContent = `SHA-256 ${pkg.sha256 || '--'}`;
-    if (size) size.textContent = `Size ${pkg.size || '--'} bytes (full file, header preserved)`;
-    if (boot) boot.textContent = formatFirmwareBoot(review.boot);
-    if (mode) mode.textContent = review.modeRule ? review.modeRule.error : '';
+    state.firmwareReview = review;
+    const { dialog, cancel } = firmwareDialogElements();
+    applyFirmwareReviewDialogCopy();
     if (dialog) dialog.hidden = false;
     state.firmwareDialogOpen = true;
     syncFirmwareChrome();
     if (cancel) cancel.focus();
   } catch (err) {
-    showToast(`Failed to review firmware: ${err.message}`, 'error');
+    showToast(t('toast.reviewFirmwareError', { error: err.message }), 'error');
   }
 }
 
@@ -6971,39 +7196,278 @@ async function confirmFirmwareDialog() {
     closeFirmwareDialog();
     await refreshFirmwarePanel();
     if (res && res.success && res.fullUpdaterSuccess) {
-      showToast('Firmware update finished. Version readback and restore were verified in this app. Physical flash remains unproven.', 'success', 8000);
+      showToast(t('toast.firmwareFinished'), 'success', 8000);
     } else if (res && res.reason === 'cancelled') {
-      showToast(`Firmware update cancelled: ${res.error || 'cancelled'}.`, 'warning', 6000);
+      showToast(t('toast.firmwareCancelled', { error: res.error || t('toast.cancelled') }), 'warning', 6000);
     } else {
-      showToast(`Firmware update did not succeed: ${res && res.error ? res.error : 'unknown error'}`, 'error', 8000);
+      showToast(t('toast.firmwareFailed', { error: res && res.error ? res.error : t('toast.unknownError') }), 'error', 8000);
     }
   } catch (err) {
     state.firmwareCommitInFlight = false;
     closeFirmwareDialog();
     await refreshFirmwarePanel();
-    showToast(`Firmware update result is unconfirmed: ${err.message}. Do not retry an uncertain erase.`, 'error', 8000);
+    showToast(t('toast.firmwareUnconfirmed', { error: err.message }), 'error', 8000);
   } finally {
     state.firmwareCommitInFlight = false;
     syncFirmwareChrome();
   }
 }
 
+function firmwareResumeErrorMessage(res) {
+  const reason = res && res.reason;
+  const reasonKey = {
+    busy: 'firmware.reasonBusy',
+    'confirmation-required': 'firmware.reasonConfirmation',
+    unsupported: 'firmware.reasonUnsupported',
+    'backup-required': 'firmware.reasonBackupRequired',
+    'missing-anchor': 'firmware.reasonMissingAnchor',
+    'invalid-anchor': 'firmware.reasonInvalidAnchor',
+    'backup-missing': 'firmware.reasonBackupMissing',
+    'invalid-package': 'firmware.reasonInvalidPackage',
+    'package-mismatch': 'firmware.reasonPackageMismatch',
+    'no-candidate': 'firmware.reasonNoCandidate',
+    'ambiguous-identity': 'firmware.reasonAmbiguous'
+  }[reason];
+  if (reasonKey) return t(reasonKey);
+  return (res && res.error) || t('toast.unknownError');
+}
+
+function renderFirmwareRecovery() {
+  const banner = document.getElementById('firmware-recovery');
+  const body = document.getElementById('firmware-recovery-body');
+  const resumeBtn = document.getElementById('btn-firmware-resume');
+  const status = state.firmwareInterrupted;
+  const present = Boolean(status && status.success && status.present);
+  const canResume = present && status.backupPresent === true;
+  if (banner) banner.hidden = !present;
+  if (body) {
+    body.textContent = !present
+      ? ''
+      : (canResume ? t('firmware.recoveryBody') : t('firmware.recoveryBodyNoBackup'));
+  }
+  if (resumeBtn) resumeBtn.hidden = !canResume;
+  syncFirmwareChrome();
+}
+
+async function refreshInterruptedFirmware(options = {}) {
+  if (!api.firmwareInterruptedStatus) return;
+  const captured = { gen: state.editGeneration, resetEpoch: state.resetEpoch };
+  try {
+    const status = await api.firmwareInterruptedStatus();
+    if (!requestStillCurrent(captured)) return;
+    const wasPresent = Boolean(state.firmwareInterrupted && state.firmwareInterrupted.present);
+    state.firmwareInterrupted = status || { success: false, present: false };
+    renderFirmwareRecovery();
+    if (!status || !status.success) {
+      if (options.announce) {
+        showToast(t('toast.firmwareRecoveryCheckFailed', { error: firmwareResumeErrorMessage(status) }), 'error');
+      }
+      return;
+    }
+    if (options.announce && status.present && !wasPresent) {
+      showToast(t('toast.firmwareRecoveryFound'), 'warning', 8000);
+    }
+  } catch (err) {
+    if (!requestStillCurrent(captured)) return;
+    if (options.announce) {
+      showToast(t('toast.firmwareRecoveryCheckFailed', { error: err.message }), 'error');
+    }
+  }
+}
+
+function applyFirmwareRecoveryDialogCopy() {
+  const { title, body, confirm } = firmwareRecoveryDialogElements();
+  const mode = state.firmwareRecoveryDialogMode;
+  if (mode === 'resume') {
+    if (title) title.textContent = t('firmware.resumeTitle');
+    if (body) body.textContent = t('firmware.resumeBody');
+    if (confirm) confirm.textContent = t('firmware.resumeConfirm');
+    return;
+  }
+  if (mode === 'mismatch') {
+    if (title) title.textContent = t('firmware.mismatchTitle');
+    if (body) body.textContent = t('firmware.mismatchBody');
+    if (confirm) confirm.textContent = t('firmware.mismatchConfirm');
+    return;
+  }
+  if (title) title.textContent = t('firmware.discardTitle');
+  if (body) body.textContent = t('firmware.discardBody');
+  if (confirm) confirm.textContent = t('firmware.recoveryDiscard');
+}
+
+function closeFirmwareRecoveryDialog() {
+  if (state.firmwareCommitInFlight) return;
+  const { dialog } = firmwareRecoveryDialogElements();
+  state.firmwareRecoveryDialogOpen = false;
+  state.firmwareRecoveryDialogMode = null;
+  if (dialog) {
+    dialog.hidden = true;
+    dialog.removeAttribute('aria-busy');
+  }
+  const opener = state.firmwareRecoveryDialogOpener;
+  state.firmwareRecoveryDialogOpener = null;
+  syncFirmwareChrome();
+  if (opener && typeof opener.focus === 'function' && document.contains(opener)) {
+    opener.focus();
+  }
+}
+
+function openFirmwareRecoveryDialog(mode, opener) {
+  if (state.firmwareCommitInFlight || state.firmwareDialogOpen) return;
+  const fallback = document.getElementById(mode === 'discard' ? 'btn-firmware-discard' : 'btn-firmware-resume');
+  const active = opener || document.activeElement;
+  if (!state.firmwareRecoveryDialogOpener) {
+    state.firmwareRecoveryDialogOpener = (active && active.id && document.contains(active)) ? active : fallback;
+  }
+  state.firmwareRecoveryDialogMode = mode;
+  const { dialog, cancel } = firmwareRecoveryDialogElements();
+  applyFirmwareRecoveryDialogCopy();
+  if (dialog) dialog.hidden = false;
+  state.firmwareRecoveryDialogOpen = true;
+  syncFirmwareChrome();
+  if (cancel) cancel.focus();
+}
+
+function showFirmwareResumeOutcome(res) {
+  if (res && res.success && res.fullUpdaterSuccess) {
+    showToast(t('toast.firmwareFinished'), 'success', 8000);
+    return;
+  }
+  if (res && res.reason === 'cancelled') {
+    showToast(t('toast.firmwareCancelled', { error: res.error || t('toast.cancelled') }), 'warning', 6000);
+    return;
+  }
+  showToast(t('toast.firmwareResumeFailed', { error: firmwareResumeErrorMessage(res) }), 'error', 8000);
+}
+
+async function handleResumeInterruptedFirmware(spec) {
+  if (firmwareDialogBusy()) return;
+  if (!api.chooseFirmwarePackage || !api.resumeFirmware) {
+    showToast(t('toast.firmwareUnavailable'), 'error');
+    return;
+  }
+  const captured = { gen: state.editGeneration, resetEpoch: state.resetEpoch };
+  const opener = document.activeElement;
+  try {
+    const picked = await api.chooseFirmwarePackage(spec || {});
+    if (!requestStillCurrent(captured)) return;
+    if (picked && picked.canceled) return;
+    if (!picked || !picked.success) {
+      showToast(t('toast.firmwarePackageRejected', { error: picked && picked.error ? picked.error : t('toast.unknownError') }), 'error');
+      return;
+    }
+    showToast(t('toast.firmwarePackageSelected', { name: picked.fileName, size: picked.size }), 'info');
+    await refreshFirmwarePanel();
+    if (!requestStillCurrent(captured)) return;
+    openFirmwareRecoveryDialog('resume', opener);
+  } catch (err) {
+    if (!requestStillCurrent(captured)) return;
+    showToast(t('toast.choosePackageFailed', { error: err.message }), 'error');
+  }
+}
+
+async function runResumeFirmware(options = {}) {
+  if (!api.resumeFirmware) {
+    showToast(t('toast.firmwareUnavailable'), 'error');
+    return;
+  }
+  const captured = { gen: state.editGeneration, resetEpoch: state.resetEpoch };
+  const allowDifferentPackage = options.allowDifferentPackage === true;
+  state.firmwareCommitInFlight = true;
+  syncFirmwareChrome();
+  try {
+    const res = await api.resumeFirmware({
+      confirmed: true,
+      allowDifferentPackage
+    });
+    if (!requestStillCurrent(captured)) return;
+    state.firmwareCommitInFlight = false;
+    if (res && res.reason === 'package-mismatch' && !allowDifferentPackage) {
+      syncFirmwareChrome();
+      openFirmwareRecoveryDialog('mismatch');
+      return;
+    }
+    closeFirmwareRecoveryDialog();
+    await refreshFirmwarePanel();
+    await refreshInterruptedFirmware();
+    if (!requestStillCurrent(captured)) return;
+    showFirmwareResumeOutcome(res);
+  } catch (err) {
+    state.firmwareCommitInFlight = false;
+    closeFirmwareRecoveryDialog();
+    if (!requestStillCurrent(captured)) return;
+    await refreshFirmwarePanel();
+    await refreshInterruptedFirmware();
+    showToast(t('toast.firmwareUnconfirmed', { error: err.message }), 'error', 8000);
+  } finally {
+    state.firmwareCommitInFlight = false;
+    syncFirmwareChrome();
+  }
+}
+
+async function confirmDiscardInterruptedFirmware() {
+  if (!api.discardInterruptedFirmware) {
+    showToast(t('toast.firmwareUnavailable'), 'error');
+    return;
+  }
+  const captured = { gen: state.editGeneration, resetEpoch: state.resetEpoch };
+  state.firmwareCommitInFlight = true;
+  syncFirmwareChrome();
+  try {
+    const res = await api.discardInterruptedFirmware();
+    if (!requestStillCurrent(captured)) return;
+    state.firmwareCommitInFlight = false;
+    closeFirmwareRecoveryDialog();
+    await refreshInterruptedFirmware();
+    if (!requestStillCurrent(captured)) return;
+    if (res && res.success) {
+      showToast(t('toast.firmwareDiscarded'), 'success');
+    } else {
+      showToast(t('toast.firmwareDiscardFailed', { error: firmwareResumeErrorMessage(res) }), 'error');
+    }
+  } catch (err) {
+    state.firmwareCommitInFlight = false;
+    closeFirmwareRecoveryDialog();
+    if (!requestStillCurrent(captured)) return;
+    showToast(t('toast.firmwareDiscardFailed', { error: err.message }), 'error');
+  } finally {
+    state.firmwareCommitInFlight = false;
+    syncFirmwareChrome();
+  }
+}
+
+async function confirmFirmwareRecoveryDialog() {
+  if (state.firmwareCommitInFlight) return;
+  const mode = state.firmwareRecoveryDialogMode;
+  if (mode === 'discard') {
+    await confirmDiscardInterruptedFirmware();
+    return;
+  }
+  if (mode === 'mismatch') {
+    await runResumeFirmware({ allowDifferentPackage: true });
+    return;
+  }
+  if (mode === 'resume') {
+    await runResumeFirmware({ allowDifferentPackage: false });
+  }
+}
+
 async function handleExportProfile(profileIndex = state.editingProfile) {
   if (!state.connected) {
-    showToast('Cannot export profile: keyboard is not connected', 'warning');
+    showToast(t('toast.exportNotConnected'), 'warning');
     return;
   }
   const target = Number.isInteger(profileIndex) ? profileIndex : state.editingProfile;
-  showToast('Reading fresh profile from hardware…', 'info');
+  showToast(t('toast.readingFreshProfile'), 'info');
   try {
     const res = await api.exportProfile(target);
     if (res.success && res.filePath) {
-      showToast(`Profile ${target + 1} exported to ${res.filePath}. This file is one profile, not an all-device backup.`, 'success', 5000);
+      showToast(t('toast.profileExported', { n: target + 1, path: res.filePath }), 'success', 5000);
     } else if (!res.canceled) {
-      showToast(`Export error: ${res.error}`, 'error');
+      showToast(t('toast.exportError', { error: res.error }), 'error');
     }
   } catch (err) {
-    showToast(`Error exporting profile: ${err.message}`, 'error');
+    showToast(t('toast.exportingError', { error: err.message }), 'error');
   }
 }
 
@@ -7013,7 +7477,7 @@ async function handleExportProfile(profileIndex = state.editingProfile) {
  */
 async function handleImportProfile() {
   haltMacroRecording('import');
-  showToast('Opening import file dialog…', 'info');
+  showToast(t('toast.openingImport'), 'info');
   try {
     const res = await api.importProfile();
     if (res.success && res.data) {
@@ -7021,7 +7485,7 @@ async function handleImportProfile() {
 
       // Basic schema validation
       if (typeof data !== 'object') {
-        showToast('Invalid profile: root is not an object', 'error');
+        showToast(t('toast.invalidProfile'), 'error');
         return;
       }
 
@@ -7045,12 +7509,12 @@ async function handleImportProfile() {
       if (previewCard) previewCard.hidden = false;
       applyImportedMacroMetadata(data);
 
-      showToast('Profile preview staged! Click "Apply Imported Profile to Device" to write.', 'success');
+      showToast(t('toast.previewStaged'), 'success');
     } else if (!res.canceled) {
-      showToast(`Import error: ${res.error}`, 'error');
+      showToast(t('toast.importError', { error: res.error }), 'error');
     }
   } catch (err) {
-    showToast(`Error importing profile: ${err.message}`, 'error');
+    showToast(t('toast.importingError', { error: err.message }), 'error');
   }
 }
 
@@ -7062,11 +7526,11 @@ async function handleApplyImportedProfile() {
   haltMacroRecording('import-apply');
   const data = state.importedProfileData;
 
-  showToast('Applying imported profile…', 'info');
+  showToast(t('toast.applyingImport'), 'info');
 
   // If connected, write to hardware via single atomic transaction with generation protection
   if (state.connected) {
-    showToast('Writing imported profile (serialized, not atomic)…', 'info');
+    showToast(t('toast.writingImport'), 'info');
     try {
       const res = await api.applyProfile(data, state.editingProfile);
       if (!res.success) {
@@ -7081,13 +7545,13 @@ async function handleApplyImportedProfile() {
       }
       const errEl = document.getElementById('import-partial-error');
       if (errEl) errEl.hidden = true;
-      showToast('Imported profile applied to edit-target with per-section readback.', 'success', 5000);
+      showToast(t('toast.importApplied'), 'success', 5000);
     } catch (err) {
-      showToast(`Failed to apply profile: ${err.message}`, 'error', 7000);
+      showToast(t('toast.applyProfileFailed', { error: err.message }), 'error', 7000);
       return;
     }
   } else {
-    showToast('Imported profile staged offline across all components. Connect keyboard to write to hardware.', 'info', 4000);
+    showToast(t('toast.importStagedOffline'), 'info', 4000);
   }
 
   // Update local staging
@@ -7152,11 +7616,11 @@ async function handleApplyImportedProfile() {
 
 function formatPartialFailure(res) {
   const completed = Array.isArray(res.completedSections) && res.completedSections.length
-    ? ` completed: ${res.completedSections.join(', ')}.`
+    ? t('toast.partialCompleted', { sections: res.completedSections.join(', ') })
     : '';
-  const failed = res.failedSection ? ` failed section: ${res.failedSection}.` : '';
-  const uncertain = res.uncertain ? ' Write was acknowledged but readback did not match (uncertain device state).' : '';
-  return `${res.error || 'Operation failed'}.${completed}${failed}${uncertain} This restore is not atomic.`;
+  const failed = res.failedSection ? t('toast.partialFailedSection', { section: res.failedSection }) : '';
+  const uncertain = res.uncertain ? t('toast.partialUncertain') : '';
+  return `${res.error || t('toast.operationFailed')}.${completed}${failed}${uncertain} ${t('toast.notAtomic')}`;
 }
 
 function renderEditTargetBar() {
@@ -7164,7 +7628,7 @@ function renderEditTargetBar() {
   const ed = document.getElementById('editing-label');
   const sel = document.getElementById('edit-profile-select');
   if (hw) hw.textContent = t('sidebar.hardwareActive', { n: state.activeProfile + 1 });
-  if (ed) ed.textContent = `${t('sidebar.editing', { n: state.editingProfile + 1 })} · Layer ${state.activeLayer}`;
+  if (ed) ed.textContent = t('sidebar.editingLayer', { n: state.editingProfile + 1, layer: state.activeLayer });
   if (sel && String(sel.value) !== String(state.editingProfile)) {
     sel.value = String(state.editingProfile);
   }
@@ -7182,11 +7646,6 @@ async function handleLoadEditTarget() {
     if (sel) sel.value = String(state.editingProfile);
     return { success: false, blocked: true };
   }
-  state.editSource = { kind: 'onboard', profileIndex: Number.isInteger(profile) ? profile : 0 };
-  state.localPreviewData = null;
-  if (typeof api.setEditSource === 'function') {
-    await api.setEditSource({ kind: 'onboard', profileIndex: state.editSource.profileIndex });
-  }
   haltMacroRecording('edit-target');
   haltKeyRecorder('edit-target');
   const captured = {
@@ -7203,45 +7662,58 @@ async function handleLoadEditTarget() {
   return runLoadEditTarget(captured);
 }
 
+function restoreEditTargetSelect() {
+  const sel = document.getElementById('edit-profile-select');
+  if (sel) sel.value = String(state.editingProfile);
+}
+
 async function runLoadEditTarget(captured) {
   try {
     const quiet = await waitForLightingWorkerQuiet(captured);
     if (!quiet) {
       if (loadRequestCurrent(captured) && state.lightingSaveWorkerBusy) {
-        showToast('Still saving lighting. Load for editing did not start.', 'warning');
+        showToast(t('toast.stillSavingLightingLoad'), 'warning');
       }
+      restoreEditTargetSelect();
       return;
     }
     const keymapQuiet = await waitForKeymapWorkerQuiet(captured);
     if (!keymapQuiet) {
       if (loadRequestCurrent(captured) && keymapSaveGate.pending > 0) {
-        showToast('Still saving key bindings. Load for editing did not start.', 'warning');
+        showToast(t('toast.stillSavingKeysLoad'), 'warning');
       }
+      restoreEditTargetSelect();
       return;
     }
     const settingsQuiet = await waitForSettingsWorkerQuiet(captured);
     if (!settingsQuiet) {
       if (loadRequestCurrent(captured) && settingsSaveGate.pending > 0) {
-        showToast('Still saving performance settings. Load for editing did not start.', 'warning');
+        showToast(t('toast.stillSavingSettingsLoad'), 'warning');
       }
+      restoreEditTargetSelect();
       return;
     }
     await api.setEditTarget(captured.profile, captured.layer);
     if (!loadRequestCurrent(captured)) return;
     state.editingProfile = captured.profile;
     state.editSource = { kind: 'onboard', profileIndex: captured.profile };
+    state.localPreviewData = null;
+    // Must land on the transport before profile reads. Those reads broadcast
+    // lastState.editSource; a stale "local" source would flip the renderer
+    // back into preview after Load already applied onboard data.
     if (typeof api.setEditSource === 'function') {
-      void api.setEditSource({ kind: 'onboard', profileIndex: captured.profile, layer: captured.layer });
+      await api.setEditSource({ kind: 'onboard', profileIndex: captured.profile, layer: captured.layer });
     }
+    if (!loadRequestCurrent(captured)) return;
     invalidateEditorSnapshots();
     updateApplyButtonsState();
     renderSettingsControls();
     renderEditTargetBar();
-    showToast(`Loading Profile ${captured.profile + 1} for editing (does not activate hardware)…`, 'info');
+    showToast(t('toast.loadingProfile', { n: captured.profile + 1 }), 'info');
     const readWaitStarted = Date.now();
     while (state.loadReadActive > 0 && loadRequestCurrent(captured)) {
       if (Date.now() - readWaitStarted >= 20000) {
-        showToast('Another profile is still loading. Load for editing did not start.', 'warning');
+        showToast(t('toast.anotherProfileLoading'), 'warning');
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 20));
@@ -7271,7 +7743,7 @@ async function runLoadEditTarget(captured) {
     const layerOk = Boolean(layerRes && layerRes.success && Array.isArray(layerRes.keys));
     if (!funcOk || !layerOk) {
       const err = (!funcOk ? (funcRes && funcRes.error) : (layerRes && layerRes.error)) || 'required profile read failed';
-      showToast(`Failed to load Profile ${captured.profile + 1} for editing: ${err}`, 'error');
+      showToast(t('toast.loadProfileFailed', { n: captured.profile + 1, error: err }), 'error');
       return;
     }
     if (funcRes.lighting) state.lighting = { ...state.lighting, ...funcRes.lighting };
@@ -7339,10 +7811,10 @@ async function runLoadEditTarget(captured) {
     renderMacros();
     renderAdvancedPanel();
     renderEditTargetBar();
-    showToast(`Editing Profile ${captured.profile + 1}. Hardware active profile unchanged.`, 'success');
+    showToast(t('toast.editingProfile', { n: captured.profile + 1 }), 'success');
   } catch (err) {
     if (!loadRequestCurrent(captured)) return;
-    showToast(`Failed to load edit target: ${err.message}`, 'error');
+    showToast(t('toast.loadEditTargetFailed', { error: err.message }), 'error');
   } finally {
     if (captured.gen === state.editGeneration) {
       state.loadInFlight = false;
@@ -7362,19 +7834,19 @@ async function handleActivateEditProfile() {
 }
 
 async function handleEnableFourthProfile() {
-  showToast('Enabling the fourth onboard profile…', 'info');
+  showToast(t('toast.enablingFourth'), 'info');
   try {
     const res = await api.enableProfiles(4);
     if (!res.success) {
-      showToast(`Failed to enable 4th profile: ${res.error}`, 'error');
+      showToast(t('toast.enableFourthFailed', { error: res.error }), 'error');
       return;
     }
     if (res.base) state.base = res.base;
     renderDashboard();
     renderEditTargetBar();
-    showToast('Fourth onboard profile enabled. Select it as an edit target; it is not auto-activated.', 'success');
+    showToast(t('toast.fourthEnabled'), 'success');
   } catch (err) {
-    showToast(`Error enabling profile 4: ${err.message}`, 'error');
+    showToast(t('toast.enableFourthError', { error: err.message }), 'error');
   }
 }
 
@@ -7469,7 +7941,7 @@ function ensureLoadedModifierOption(mask) {
   }
   const el = document.createElement('option');
   el.value = value;
-  el.textContent = `Modifiers & Controls: ${modifierMaskLabel(mask)}`;
+  el.textContent = t('adv.modifiers', { label: modifierMaskLabel(mask) });
   modEl.append(el);
 }
 
@@ -7573,7 +8045,7 @@ function syncAdvancedKindUi() {
   if (socd) socd.hidden = kind !== 'socd';
   if (cb) cb.hidden = kind !== 'cb';
   const label = document.getElementById('adv-kind-label');
-  if (label) label.textContent = `Binding type: ${ADV_KIND_TITLES[kind] || kind}`;
+  if (label) label.textContent = t('adv.bindingType', { kind: t(kind === 'mt' ? 'adv.mt' : kind === 'tgl' ? 'adv.tgl' : kind === 'cb' ? 'adv.cb' : 'adv.socd') || ADV_KIND_TITLES[kind] || kind });
   document.querySelectorAll('.adv-type-card').forEach((card) => {
     card.classList.toggle('selected', card.dataset.kind === kind);
   });
@@ -7665,12 +8137,13 @@ function renderAdvancedBindingList() {
     kind.textContent = item.malformed ? `${(item.kind || '').toUpperCase()} (broken pair)` : (item.kind || '').toUpperCase();
     const layer = document.createElement('span');
     layer.className = 'adv-binding-layer';
-    layer.textContent = KeyConfig.ADVANCED_LAYER_LABELS[item.layer] || `Layer ${item.layer}`;
+    const layerKeys = ['adv.layerWin', 'adv.layerWinFn', 'adv.layerMac', 'adv.layerMacFn'];
+    layer.textContent = layerKeys[item.layer] ? t(layerKeys[item.layer]) : t('sidebar.profileN', { n: item.layer });
     meta.append(kind, layer);
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'adv-binding-delete';
-    del.setAttribute('aria-label', `Delete ${item.kind} binding`);
+    del.setAttribute('aria-label', t('adv.deleteAria', { kind: item.kind }));
     del.textContent = '×';
     del.addEventListener('click', (ev) => {
       ev.stopPropagation();
@@ -7682,13 +8155,13 @@ function renderAdvancedBindingList() {
       const tip = document.createElement('div');
       tip.className = 'adv-binding-confirm';
       const p = document.createElement('p');
-      p.textContent = 'Are you sure you want to delete this advanced key?';
+      p.textContent = t('adv.deleteConfirm');
       const actions = document.createElement('div');
       actions.className = 'adv-binding-confirm-actions';
       const yes = document.createElement('button');
       yes.type = 'button';
       yes.className = 'action-btn danger-subtle';
-      yes.textContent = 'Delete';
+      yes.textContent = t('dialog.delete');
       yes.addEventListener('click', (ev) => {
         ev.stopPropagation();
         state.advancedDeleteConfirmId = '';
@@ -7697,7 +8170,7 @@ function renderAdvancedBindingList() {
       const no = document.createElement('button');
       no.type = 'button';
       no.className = 'action-btn';
-      no.textContent = 'Cancel';
+      no.textContent = t('dialog.cancel');
       no.addEventListener('click', (ev) => {
         ev.stopPropagation();
         state.advancedDeleteConfirmId = '';
@@ -7814,20 +8287,24 @@ function renderAdvancedPanel() {
   const info = document.getElementById('advanced-selected-info');
   if (info) {
     if (state.selectedKey) {
-      info.textContent = `${state.selectedKey.name} · Profile ${state.editingProfile + 1} · Layer ${state.activeLayer}`;
+      info.textContent = t('adv.selectedInfo', {
+        name: state.selectedKey.name,
+        profile: state.editingProfile + 1,
+        layer: state.activeLayer
+      });
     } else {
-      info.textContent = 'Choose a physical key here or on the Key Mapping tab.';
+      info.textContent = t('adv.pickKeyShort');
     }
   }
   const bindEl = document.getElementById('advanced-current-binding');
   const assigned = state.selectedKey ? state.layerKeymaps[state.activeLayer]?.[state.selectedKey.slot] : null;
   if (bindEl) {
     if (assigned && (assigned.type === 145 || assigned.type === 146 || assigned.type === 148)) {
-      bindEl.textContent = `Current: type ${assigned.type} code1 ${assigned.code1} code2 ${assigned.code2}`;
+      bindEl.textContent = t('adv.currentCodes', { type: assigned.type, code1: assigned.code1, code2: assigned.code2 });
     } else if (assigned && assigned.type === 16 && assigned.code1 > 0 && assigned.code2 > 0) {
       bindEl.textContent = comboBindingLabel(assigned);
     } else {
-      bindEl.textContent = 'No advanced binding on this key.';
+      bindEl.textContent = t('adv.noneOnKey');
     }
   }
   const usage = document.getElementById('advanced-table-usage');
@@ -7836,7 +8313,7 @@ function renderAdvancedPanel() {
     const tgl = state.advancedRead.references.tgl;
     const mtN = mt && typeof mt.size === 'number' ? mt.size : (Array.isArray(mt) ? mt.length : (mt ? Object.keys(mt).length : 0));
     const tglN = tgl && typeof tgl.size === 'number' ? tgl.size : (Array.isArray(tgl) ? tgl.length : (tgl ? Object.keys(tgl).length : 0));
-    usage.textContent = `MT ${mtN}/32 · TGL ${tglN}/32 referenced (shared across all 4 layers)`;
+    usage.textContent = t('adv.usage', { mt: mtN, tgl: tglN });
   }
   renderAdvancedBindingList();
   renderBindingTestLists();
@@ -7849,7 +8326,7 @@ async function handleReadAdvanced() {
     const res = await api.readAdvanced(captured.profile);
     if (!requestStillCurrent(captured)) return;
     if (!res.success) {
-      showToast(`Failed to read advanced tables: ${res.error}`, 'error');
+      showToast(t('toast.readAdvancedFailed', { error: res.error }), 'error');
       return;
     }
     state.advancedRead = res;
@@ -7857,10 +8334,10 @@ async function handleReadAdvanced() {
       adoptCbKeyIndexList(res.customParam.cbKeyIndexList);
     }
     renderAdvancedPanel();
-    showToast('Advanced tables read for edit-target profile.', 'success');
+    showToast(t('toast.advancedRead'), 'success');
   } catch (err) {
     if (!requestStillCurrent(captured)) return;
-    showToast(`Error reading advanced: ${err.message}`, 'error');
+    showToast(t('toast.readAdvancedError', { error: err.message }), 'error');
   }
 }
 
@@ -7868,14 +8345,14 @@ async function handleApplyAdvanced() {
   if (isLocalPreview()) {
     const res = await applyAdvancedLocally();
     showToast(
-      res.success ? 'Saved to custom profile (keyboard not written).' : (res.error || 'Couldn’t save'),
+      res.success ? t('toast.savedCustom') : (res.error || t('toast.couldntSave')),
       res.success ? 'success' : (res.stale ? 'warning' : 'error')
     );
     return res;
   }
   if (state.loadInFlight) return;
   if (!state.selectedKey) {
-    showToast('Select an eligible physical key first.', 'warning');
+    showToast(t('toast.selectEligibleKey'), 'warning');
     return;
   }
   const captured = { gen: state.editGeneration, resetEpoch: state.resetEpoch, profile: state.editingProfile, layer: state.activeLayer };
@@ -7894,10 +8371,10 @@ async function handleApplyAdvanced() {
     await handleReadLayer();
     await handleReadAdvanced();
     if (!requestStillCurrent(captured)) return;
-    showToast('Advanced binding applied.', 'success');
+    showToast(t('toast.advancedApplied'), 'success');
   } catch (err) {
     if (!requestStillCurrent(captured)) return;
-    showToast(`Advanced apply failed: ${err.message}`, 'error');
+    showToast(t('toast.advancedApplyFailed', { error: err.message }), 'error');
   }
 }
 
@@ -8018,7 +8495,7 @@ function finishOwnedLocalAdvanced(res, capturedKeys) {
     state.layerKeymaps,
     cbSlotsForLayer
   )) {
-    return { ok: false, stale: true, error: 'A newer advanced edit made this local save incoherent' };
+    return { ok: false, stale: true, error: t('toast.localSaveIncoherent') };
   }
   if (changedSlots.length === 0) {
     return { ok: true, applied: [], ownedKeys: capturedKeys, previous: [] };
@@ -8088,7 +8565,7 @@ function buildAdvancedSpecFromEditor(profileIndex, layer, slot) {
 
 async function applyAdvancedLocally() {
   if (!state.selectedKey) {
-    return { success: false, error: 'Select an eligible physical key first.', hardwareWrites: 0 };
+    return { success: false, error: t('toast.selectEligibleKey'), hardwareWrites: 0 };
   }
   const spec = buildAdvancedSpecFromEditor(0, state.activeLayer, state.selectedKey.slot);
   const captured = KeyConfig.captureSaveIdentity(
@@ -8105,16 +8582,16 @@ async function applyAdvancedLocally() {
   return keymapSaveGate.enqueue(async () => {
     await maybeDelayLocalAdvanced();
     if (!KeyConfig.saveIdentityMatches(captured, currentAdvancedSaveIdentity())) {
-      return { success: false, stale: true, hardwareWrites: 0, error: 'Edit target changed before the local advanced save finished' };
+      return { success: false, stale: true, hardwareWrites: 0, error: t('toast.editTargetChangedLocal') };
     }
     const snapshot = currentLocalAdvancedSnapshot();
     const res = await api.applyAdvancedLocal({ spec, snapshot });
     if (!KeyConfig.saveIdentityMatches(captured, currentAdvancedSaveIdentity())) {
-      return { success: false, stale: true, hardwareWrites: 0, error: 'Edit target changed before the local advanced save finished' };
+      return { success: false, stale: true, hardwareWrites: 0, error: t('toast.editTargetChangedLocal') };
     }
     if (!res.success) return Object.assign({ hardwareWrites: 0 }, res);
     if (res.hardwareWrites) {
-      return { success: false, hardwareWrites: res.hardwareWrites, error: 'Local preview must not write the keyboard.' };
+      return { success: false, hardwareWrites: res.hardwareWrites, error: t('toast.localPreviewNoWrite') };
     }
     const finished = finishOwnedLocalAdvanced(res, capturedKeys);
     if (!finished.ok) return Object.assign({ hardwareWrites: 0 }, finished);
@@ -8175,16 +8652,16 @@ async function removeAdvancedLocally(layer, slot) {
   return keymapSaveGate.enqueue(async () => {
     await maybeDelayLocalAdvanced();
     if (!KeyConfig.saveIdentityMatches(captured, currentAdvancedSaveIdentity())) {
-      return { success: false, stale: true, hardwareWrites: 0, error: 'Edit target changed before the local advanced save finished' };
+      return { success: false, stale: true, hardwareWrites: 0, error: t('toast.editTargetChangedLocal') };
     }
     const snapshot = currentLocalAdvancedSnapshot();
     const res = await api.applyAdvancedLocal({ spec, snapshot });
     if (!KeyConfig.saveIdentityMatches(captured, currentAdvancedSaveIdentity())) {
-      return { success: false, stale: true, hardwareWrites: 0, error: 'Edit target changed before the local advanced save finished' };
+      return { success: false, stale: true, hardwareWrites: 0, error: t('toast.editTargetChangedLocal') };
     }
     if (!res.success) return Object.assign({ hardwareWrites: 0 }, res);
     if (res.hardwareWrites) {
-      return { success: false, hardwareWrites: res.hardwareWrites, error: 'Local preview must not write the keyboard.' };
+      return { success: false, hardwareWrites: res.hardwareWrites, error: t('toast.localPreviewNoWrite') };
     }
     const finished = finishOwnedLocalAdvanced(res, capturedKeys);
     if (!finished.ok) return Object.assign({ hardwareWrites: 0 }, finished);
@@ -8223,7 +8700,7 @@ async function removeAdvancedLocally(layer, slot) {
 
 async function handleRemoveAdvanced() {
   if (!state.selectedKey) {
-    showToast('Select a key first.', 'warning');
+    showToast(t('toast.selectKeyFirstShort'), 'warning');
     return;
   }
   return handleRemoveAdvancedAt(state.activeLayer, state.selectedKey.slot);
@@ -8234,7 +8711,7 @@ async function handleRemoveAdvancedAt(layer, slot) {
   if (isLocalPreview()) {
     const res = await removeAdvancedLocally(layer, slot);
     showToast(
-      res.success ? 'Saved to custom profile (keyboard not written).' : (res.error || 'Couldn’t save'),
+      res.success ? t('toast.savedCustom') : (res.error || t('toast.couldntSave')),
       res.success ? 'success' : (res.stale ? 'warning' : 'error')
     );
     return res;
@@ -8256,10 +8733,10 @@ async function handleRemoveAdvancedAt(layer, slot) {
     await handleReadLayer();
     await handleReadAdvanced();
     if (!requestStillCurrent(captured)) return;
-    showToast('Advanced binding removed.', 'success');
+    showToast(t('toast.advancedRemoved'), 'success');
   } catch (err) {
     if (!requestStillCurrent(captured)) return;
-    showToast(`Advanced remove failed: ${err.message}`, 'error');
+    showToast(t('toast.advancedRemoveFailed', { error: err.message }), 'error');
   }
 }
 
@@ -8299,7 +8776,7 @@ async function confirmAdvancedClearDialog() {
     source: currentProfileSource()
   };
   if (!KeyConfig.saveIdentityMatches(captured, current)) {
-    showToast('Edit target changed. Clear all was not applied.', 'warning');
+    showToast(t('toast.editTargetChangedClear'), 'warning');
     return;
   }
   await handleClearAllAdvanced(captured);
@@ -8334,7 +8811,7 @@ async function handleClearAllAdvanced(identity) {
     source: currentProfileSource()
   };
   if (!KeyConfig.saveIdentityMatches(captured, current)) {
-    showToast('Edit target changed. Clear all was not applied.', 'warning');
+    showToast(t('toast.editTargetChangedClear'), 'warning');
     return;
   }
   const slots = physicalSlotsList();
@@ -8360,16 +8837,16 @@ async function handleClearAllAdvanced(identity) {
     const queued = await keymapSaveGate.enqueue(async () => {
       await maybeDelayLocalAdvanced();
       if (!KeyConfig.saveIdentityMatches(captured, currentAdvancedSaveIdentity())) {
-        return { success: false, stale: true, hardwareWrites: 0, error: 'Edit target changed before the local advanced save finished' };
+        return { success: false, stale: true, hardwareWrites: 0, error: t('toast.editTargetChangedLocal') };
       }
       const snapshot = currentLocalAdvancedSnapshot();
       const res = await api.clearAllAdvancedLocal({ snapshot });
       if (!KeyConfig.saveIdentityMatches(captured, currentAdvancedSaveIdentity())) {
-        return { success: false, stale: true, hardwareWrites: 0, error: 'Edit target changed before the local advanced save finished' };
+        return { success: false, stale: true, hardwareWrites: 0, error: t('toast.editTargetChangedLocal') };
       }
       if (!res.success) return Object.assign({ hardwareWrites: 0 }, res);
       if (res.hardwareWrites) {
-        return { success: false, hardwareWrites: res.hardwareWrites, error: 'Local preview must not write the keyboard.' };
+        return { success: false, hardwareWrites: res.hardwareWrites, error: t('toast.localPreviewNoWrite') };
       }
       const finished = finishOwnedLocalAdvanced(res, capturedKeys);
       if (!finished.ok) return Object.assign({ hardwareWrites: 0 }, finished);
@@ -8403,12 +8880,12 @@ async function handleClearAllAdvanced(identity) {
       return persisted.success ? res : persisted;
     });
     if (!queued.success) {
-      showToast(queued.error || 'Couldn’t clear advanced keys', queued.stale ? 'warning' : 'error');
+      showToast(queued.error || t('toast.clearAdvancedFailed'), queued.stale ? 'warning' : 'error');
       return;
     }
     renderKeyboard();
     renderAdvancedPanel();
-    showToast('Cleared advanced keys on this custom profile (keyboard not written).', 'success');
+    showToast(t('toast.clearedAdvancedCustom'), 'success');
     return queued;
   }
 
@@ -8432,7 +8909,7 @@ async function handleClearAllAdvanced(identity) {
         );
         state.hasReadKeymap[layer] = true;
       } else {
-        showToast(`Could not read layer ${layer} before clear-all: ${res.error || 'read failed'}`, 'error');
+        showToast(t('toast.readLayerBeforeClearFailed', { layer, error: res.error || t('toast.readFailed') }), 'error');
         return;
       }
     }
@@ -8472,10 +8949,10 @@ async function handleClearAllAdvanced(identity) {
     await handleReadAdvanced();
     if (!requestStillCurrent(captured)) return;
     renderKeyboard();
-    showToast('Cleared advanced keys on all four layers. Ordinary remaps were left in place.', 'success');
+    showToast(t('toast.clearedAdvancedAll'), 'success');
   } catch (err) {
     if (!requestStillCurrent(captured)) return;
-    showToast(`Advanced clear-all failed: ${err.message}`, 'error');
+    showToast(t('toast.advancedClearAllFailed', { error: err.message }), 'error');
   }
 }
 
@@ -8628,6 +9105,7 @@ async function init() {
   updateApplyButtonsState();
   attachMacroListeners();
   attachAdvancedListeners();
+  attachOnboardDrop(document.getElementById('profile-free-slot'), null, true);
   renderEditTargetBar();
   if (KeyConfig) state.keyRecorder = KeyConfig.emptyRecorder();
 
@@ -8667,6 +9145,7 @@ async function init() {
   // Initial scan and load
   await scanHardware();
   await refreshLightingMemoryPref();
+  void refreshInterruptedFirmware({ announce: true });
 }
 
 function editorSnapshot() {
@@ -8974,6 +9453,15 @@ function editorSnapshot() {
     profileProgressHidden: Boolean(document.getElementById('profile-library-progress')?.hidden),
     tabLightingLabel: document.querySelector('#tab-lighting .tab-label')?.textContent?.trim() || '',
     tabOthersLabel: document.querySelector('#tab-others .tab-label')?.textContent?.trim() || '',
+    dashSubtitle: document.querySelector('#panel-dashboard .subtitle')?.textContent?.trim() || '',
+    keymapSubtitle: document.querySelector('#panel-keymap .subtitle')?.textContent?.trim() || '',
+    keymapSelectedTitle: document.querySelector('#panel-keymap .selected-key-card h3')?.textContent?.trim() || '',
+    lightingBrightnessLabel: document.querySelector('label[for="light-brightness-slider"]')?.textContent?.trim() || '',
+    factoryResetTitle: document.querySelector('#panel-others .dash-card:last-child h2')?.textContent?.trim() || '',
+    backupTitle: document.querySelector('#panel-profiles h1')?.textContent?.trim() || '',
+    lightingMemoryHint: document.getElementById('lighting-memory-hint')?.textContent?.trim() || '',
+    deviceStatusText: document.getElementById('device-status-text')?.textContent?.trim() || '',
+    profileStatText: document.getElementById('profile-stat-text')?.textContent?.trim() || '',
     localeZhActive: Boolean(document.getElementById('lang-zh')?.classList.contains('active')),
     localeEnActive: Boolean(document.getElementById('lang-en')?.classList.contains('active')),
     onboardTitles: Array.from(document.querySelectorAll('#onboard-profile-list .profile-title')).map((el) => el.textContent.trim()),
@@ -9024,6 +9512,20 @@ function editorSnapshot() {
     firmwareNativeWritePhases: (state.firmwareStatus && state.firmwareStatus.nativeWritePhases) || [],
     firmwareLastOutcomeSuccess: Boolean(state.firmwareStatus && state.firmwareStatus.lastOutcome && state.firmwareStatus.lastOutcome.success),
     firmwareLastOutcomeReason: (state.firmwareStatus && state.firmwareStatus.lastOutcome && state.firmwareStatus.lastOutcome.reason) || '',
+    firmwareRecoveryHidden: Boolean(document.getElementById('firmware-recovery')?.hidden),
+    firmwareRecoveryBody: document.getElementById('firmware-recovery-body')?.textContent || '',
+    firmwareResumeHidden: Boolean(document.getElementById('btn-firmware-resume')?.hidden),
+    firmwareDiscardHidden: Boolean(document.getElementById('btn-firmware-discard')?.hidden),
+    firmwareResumeDisabled: Boolean(document.getElementById('btn-firmware-resume')?.disabled),
+    firmwareDiscardDisabled: Boolean(document.getElementById('btn-firmware-discard')?.disabled),
+    firmwareRecoveryDialogHidden: Boolean(document.getElementById('firmware-recovery-dialog')?.hidden),
+    firmwareRecoveryDialogTitle: document.getElementById('firmware-recovery-dialog-title')?.textContent || '',
+    firmwareRecoveryDialogBody: document.getElementById('firmware-recovery-dialog-body')?.textContent || '',
+    firmwareRecoveryDialogConfirm: document.getElementById('btn-firmware-recovery-confirm')?.textContent || '',
+    firmwareRecoveryDialogMode: state.firmwareRecoveryDialogMode || '',
+    firmwareInterruptedPresent: Boolean(state.firmwareInterrupted && state.firmwareInterrupted.present),
+    firmwareInterruptedBackupPresent: Boolean(state.firmwareInterrupted && state.firmwareInterrupted.backupPresent),
+    firmwareInterruptedChecked: state.firmwareInterrupted !== null,
     guideFirmwareRow: (() => {
       const rows = Array.from(document.querySelectorAll('#panel-guide table.matrix-table tbody tr'));
       const row = rows.find((el) => /Firmware Flashing/i.test(el.textContent || ''));
@@ -9034,10 +9536,10 @@ function editorSnapshot() {
     return { snapshotError: String(err && err.stack ? err.stack : err) };
   }
 }
-window.__maicongEditorSnapshot = editorSnapshot;
 
 function installHarnessHooks() {
   if (!state.harness) return;
+  window.__maicongEditorSnapshot = editorSnapshot;
   window.__maicongHarness = {
     getActions(slot) {
       const s = state.stagedMacros[slot];
@@ -9164,6 +9666,12 @@ function installHarnessHooks() {
     chooseFirmwarePackage(spec) {
       return handleChooseFirmwarePackage(spec);
     },
+    refreshInterruptedFirmware() {
+      return refreshInterruptedFirmware();
+    },
+    resumeInterruptedFirmware(spec) {
+      return handleResumeInterruptedFirmware(spec);
+    },
     bindProfileApp(profileIndex, spec) {
       return (async () => {
         const res = await api.bindProfileApp({ profileIndex, ...(spec || {}) });
@@ -9211,10 +9719,7 @@ function installHarnessHooks() {
       return parsed.ok;
     },
     async importGif(name, bytes) {
-      const res = await api.importGif({
-        name,
-        buffer: Array.isArray(bytes) ? bytes : Array.from(bytes || [])
-      });
+      const res = await api.importGif({ name, buffer: bytes });
       if (res && res.gifLibrary) adoptGifLibrary(res.gifLibrary);
       if (res && res.item && res.item.key) {
         state.selectedGifKey = res.item.key;

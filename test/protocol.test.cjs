@@ -564,6 +564,14 @@ describe('GLW Keyboard Protocol Encoder & Decoder (Verified Hardware)', () => {
     assert.strictEqual(badEffect.valid, false);
     assert.match(badEffect.error, /invalid lighting effect/i);
 
+    const unknownSideWrite = validators.validateLightingParams({ sideEffect: 9 });
+    assert.strictEqual(unknownSideWrite.valid, false);
+    assert.match(unknownSideWrite.error, /invalid sideEffect/i);
+    const unknownSideSnap = validators.validateLightingParams({ sideEffect: 9 }, { allowHardwareReadback: true });
+    assert.strictEqual(unknownSideSnap.valid, true, unknownSideSnap.error);
+    const unknownMainSnap = validators.validateLightingParams({ effect: 99 }, { allowHardwareReadback: true });
+    assert.strictEqual(unknownMainSnap.valid, true, unknownMainSnap.error);
+
     // Reject non-integer speed
     const floatSpeed = validators.validateLightingParams({ speed: 2.5 });
     assert.strictEqual(floatSpeed.valid, false);

@@ -66,6 +66,10 @@ const OFFICIAL_CATALOG = Object.freeze({
       sha256: 'b6b2a6abc0a682b3511049789d70c646268491c11aa65f0700120c42805b43f1',
       version: '1.14',
       versionNumber: 114,
+      // Exact wire value the post-update version gate compares against:
+      // versionNumber 114 means vendor fwVersion114 / wire 0x0114, never
+      // decimal 114.
+      versionRaw: 0x0114,
       versionSource: 'official-catalog',
       firmwareField: 'firmwareVersion'
     })
@@ -95,6 +99,7 @@ const OFFICIAL_CATALOG = Object.freeze({
       sha256: '06fc8728f1b098e08386f18950ee4f8db8b4de0d3cd1adce285989c4d568e5fb',
       version: '1.30',
       versionNumber: 130,
+      versionRaw: 0x0130,
       versionSource: 'official-catalog',
       firmwareField: 'rfFirmwareVersion'
     })
@@ -385,6 +390,40 @@ function sameDeviceIdentity(left, right) {
   return locationLeft === locationRight;
 }
 
+/**
+ * Same-device evidence for a bounded normal<->boot transition. Bootloaders
+ * commonly ship minimal descriptors without a serial string, so a serial
+ * mismatch is only proven when BOTH sides expose one; otherwise the stable
+ * USB location is the continuity anchor. The weaker binding is recorded
+ * explicitly as serialEvidence so callers can surface it. Normal<->normal
+ * comparisons that guard configuration writes keep using sameDeviceIdentity.
+ */
+function transitionIdentityEvidence(anchor, identity) {
+  if (!anchor || !identity || typeof anchor !== 'object' || typeof identity !== 'object') {
+    return { match: false, serialEvidence: 'none', reason: 'missing-identity' };
+  }
+  const locationAnchor = stableUsbLocation(anchor);
+  const locationIdentity = stableUsbLocation(identity);
+  if (locationAnchor === null || locationIdentity === null) {
+    return { match: false, serialEvidence: 'none', reason: 'location-missing' };
+  }
+  if (locationAnchor !== locationIdentity) {
+    return { match: false, serialEvidence: 'none', reason: 'location-mismatch' };
+  }
+  const serialAnchor = normalizeString(anchor.serialNumber ?? anchor.serial);
+  const serialIdentity = normalizeString(identity.serialNumber ?? identity.serial);
+  if (serialAnchor !== null && serialIdentity !== null) {
+    return serialAnchor === serialIdentity
+      ? { match: true, serialEvidence: 'both' }
+      : { match: false, serialEvidence: 'both', reason: 'serial-mismatch' };
+  }
+  return { match: true, serialEvidence: 'location-only' };
+}
+
+function sameTransitionIdentity(anchor, identity) {
+  return transitionIdentityEvidence(anchor, identity).match;
+}
+
 function sha256Hex(bytes) {
   return crypto.createHash('sha256').update(toBuffer(bytes, 'firmware package')).digest('hex');
 }
@@ -434,6 +473,7 @@ function validateFirmwarePackage(bytes, targetRef, options = {}) {
     transport: target.transport,
     version: manifest.version,
     versionNumber: manifest.versionNumber,
+    versionRaw: Number.isInteger(manifest.versionRaw) ? manifest.versionRaw : null,
     versionSource: manifest.versionSource || 'catalog',
     fileName: manifest.fileName,
     size: data.length,
@@ -446,30 +486,20 @@ function validateFirmwarePackage(bytes, targetRef, options = {}) {
   };
 }
 
-function formatCatalogVersionNumber(raw) {
-  if (!Number.isInteger(raw) || raw === 0 || raw === 0xFFFF) return null;
-  const hex = raw.toString(16);
-  if (hex.length >= 3) return `${hex.slice(0, hex.length - 2)}.${hex.slice(-2)}`;
-  return hex;
-}
-
 /**
- * Official catalog versionNumber 114 means vendor fwVersion114 / wire 0x0114.
- * Tests may also use a raw integer that already equals versionNumber.
+ * The catalog pins the exact wire value as versionRaw (official catalog:
+ * versionNumber 114 means vendor fwVersion114 / wire 0x0114, NOT decimal
+ * 114). No decimal reinterpretation is permitted here: a device reporting
+ * raw 0x0072 (displayed "0.72") must not satisfy a gate for catalog version
+ * 1.14. A catalog without a pinned versionRaw falls back to treating
+ * versionNumber itself as the wire value, which is what test fixtures do.
  */
 function catalogVersionMatchesRaw(actualRaw, catalogPackage) {
   if (!Number.isInteger(actualRaw) || !catalogPackage || typeof catalogPackage !== 'object') return false;
-  if (actualRaw === catalogPackage.versionNumber) return true;
-  const digits = String(catalogPackage.versionNumber);
-  if (/^[0-9]+$/.test(digits)) {
-    const asHex = parseInt(digits, 16);
-    if (Number.isInteger(asHex) && actualRaw === asHex) return true;
-  }
-  if (typeof catalogPackage.version === 'string'
-    && catalogPackage.version === formatCatalogVersionNumber(actualRaw)) {
-    return true;
-  }
-  return false;
+  const expectedRaw = Number.isInteger(catalogPackage.versionRaw)
+    ? catalogPackage.versionRaw
+    : catalogPackage.versionNumber;
+  return Number.isInteger(expectedRaw) && actualRaw === expectedRaw;
 }
 
 function packageReview(info) {
@@ -481,6 +511,7 @@ function packageReview(info) {
     transport: info.transport,
     version: info.version,
     versionNumber: info.versionNumber,
+    versionRaw: Number.isInteger(info.versionRaw) ? info.versionRaw : null,
     versionSource: info.versionSource,
     fileName: info.fileName,
     size: info.size,
@@ -521,12 +552,13 @@ module.exports = {
   matchesBootIdentity,
   identifyNormalTarget,
   sameDeviceIdentity,
+  transitionIdentityEvidence,
+  sameTransitionIdentity,
   parseTopologyNumber,
   stableUsbLocation,
   hasStableUsbLocation,
   sha256Hex,
   validateFirmwarePackage,
-  formatCatalogVersionNumber,
   catalogVersionMatchesRaw,
   packageReview
 };

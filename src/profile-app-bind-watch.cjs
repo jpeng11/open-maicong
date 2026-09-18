@@ -35,12 +35,16 @@ class AppBindWatcher {
     this.onSwitch = options.onSwitch || null;
     this._timer = null;
     this._inflight = false;
+    // Bumped by start()/stop() so an in-flight tick abandons its result
+    // instead of completing a profile switch after stop().
+    this._generation = 0;
     this.lastBundleId = null;
     this.lastSwitch = null;
   }
 
   start() {
     if (this._timer) return;
+    this._generation += 1;
     this._timer = setInterval(() => {
       void this.tick();
     }, this.intervalMs);
@@ -50,11 +54,14 @@ class AppBindWatcher {
   stop() {
     if (this._timer) clearInterval(this._timer);
     this._timer = null;
+    this._generation += 1;
   }
 
   async tick() {
     if (this._inflight) return { skipped: true, reason: 'busy-tick' };
     this._inflight = true;
+    const generation = this._generation;
+    const stale = () => generation !== this._generation;
     try {
       if (typeof this.isConnected === 'function' && !this.isConnected()) {
         return { skipped: true, reason: 'disconnected' };
@@ -65,6 +72,7 @@ class AppBindWatcher {
       const binds = typeof this.getBinds === 'function' ? (this.getBinds() || []) : [];
       if (!binds.length) return { skipped: true, reason: 'no-binds' };
       const frontmost = await this.getFrontmost();
+      if (stale()) return { skipped: true, reason: 'stopped' };
       const bundleId = frontmost && frontmost.bundleId;
       if (!bundleId) return { skipped: true, reason: 'no-frontmost' };
       if (this.ignoreBundleIds.has(String(bundleId).toLowerCase())) {
@@ -82,6 +90,7 @@ class AppBindWatcher {
         return this.lastSwitch;
       }
       const switched = await this.switchProfile(hit.profileIndex);
+      if (stale()) return { skipped: true, reason: 'stopped' };
       this.lastSwitch = {
         success: Boolean(switched && switched.success),
         profileIndex: hit.profileIndex,

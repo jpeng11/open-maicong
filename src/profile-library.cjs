@@ -13,6 +13,7 @@ const { VALID_PHYSICAL_SLOTS } = require('./layout-g75v2.cjs');
 const names = require('./profile-names.cjs');
 const keys = require('./profile-keys.cjs');
 const validators = require('./schema-validators.cjs');
+const storeFile = require('./store-file.cjs');
 
 const MODEL = 'g75_v2';
 const SCHEMA_VERSION = '1.0.0';
@@ -122,6 +123,13 @@ const ALLOWED_SNAPSHOT_KEYS = new Set([
   'selectedLightEffect', 'customParam', 'triggerTravel'
 ]);
 
+function isStoredKeyTuple(def) {
+  return isPlainObject(def)
+    && validators.VALID_KEY_TYPES.has(def.type)
+    && validators.isUint8(def.code1)
+    && validators.isUint8(def.code2);
+}
+
 function validateStoredLayers(layers) {
   if (!isPlainObject(layers) && !Array.isArray(layers)) {
     return { valid: false, error: 'Profile layers must be an object' };
@@ -131,8 +139,7 @@ function validateStoredLayers(layers) {
     if (layer == null) return { valid: false, error: `Profile layer ${l} is missing` };
     if (Array.isArray(layer)) {
       for (let i = 0; i < layer.length; i++) {
-        const def = layer[i];
-        if (!isPlainObject(def) || !Number.isInteger(def.type) || !Number.isInteger(def.code1) || !Number.isInteger(def.code2)) {
+        if (!isStoredKeyTuple(layer[i])) {
           return { valid: false, error: `Profile layer ${l} entry ${i} is malformed` };
         }
       }
@@ -140,7 +147,7 @@ function validateStoredLayers(layers) {
     }
     if (!isPlainObject(layer)) return { valid: false, error: `Profile layer ${l} must be an object` };
     for (const [slot, def] of Object.entries(layer)) {
-      if (!isPlainObject(def) || !Number.isInteger(def.type) || !Number.isInteger(def.code1) || !Number.isInteger(def.code2)) {
+      if (!isStoredKeyTuple(def)) {
         return { valid: false, error: `Profile layer ${l} slot ${slot} is malformed` };
       }
     }
@@ -165,15 +172,13 @@ function validateNativeSnapshot(data) {
   if (!isPlainObject(data.lighting)) {
     return { valid: false, error: 'Profile lighting must be an object' };
   }
-  if (!Number.isInteger(data.lighting.effect) || !Number.isInteger(data.lighting.brightness)) {
-    return { valid: false, error: 'Profile lighting is missing effect or brightness' };
-  }
+  const lighting = validators.validateLightingParams(data.lighting, { allowHardwareReadback: true });
+  if (!lighting.valid) return { valid: false, error: `Profile lighting: ${lighting.error}` };
   if (!isPlainObject(data.settings)) {
     return { valid: false, error: 'Profile settings must be an object' };
   }
-  if (!Number.isInteger(data.settings.sleepTime) || !Number.isInteger(data.settings.reporteRate)) {
-    return { valid: false, error: 'Profile settings are missing sleepTime or reporteRate' };
-  }
+  const settings = validators.validateSettingsParams(data.settings);
+  if (!settings.valid) return { valid: false, error: `Profile settings: ${settings.error}` };
   const rawLayers = data.layers !== undefined ? data.layers : data.keymaps;
   const layers = validateStoredLayers(rawLayers);
   if (!layers.valid) return layers;
@@ -305,18 +310,21 @@ function validateRecoveryArray(raw) {
 
 function validateDeviceRecord(device) {
   if (!isPlainObject(device)) return { valid: false, error: 'Profile library device record must be a plain object' };
-  const allowed = new Set(['model', 'items', 'identityKind', 'recovery']);
+  const allowed = new Set(['model', 'items', 'identityKind', 'recovery', 'rev']);
   for (const key of Object.keys(device)) {
     if (!allowed.has(key)) return { valid: false, error: `Unknown profile library device field "${key}"` };
   }
   if (device.model !== MODEL) {
     return { valid: false, error: `Profile library device model must be ${MODEL}` };
   }
+  if (device.rev !== undefined && (!Number.isInteger(device.rev) || device.rev < 0)) {
+    return { valid: false, error: 'Profile library device rev is malformed' };
+  }
   const items = validateItemsArray(device.items);
   if (!items.valid) return items;
   const recovery = validateRecoveryArray(device.recovery);
   if (!recovery.valid) return recovery;
-  return { valid: true, items: items.items, recovery: recovery.recovery };
+  return { valid: true, items: items.items, recovery: recovery.recovery, rev: device.rev === undefined ? 0 : device.rev };
 }
 
 function parseLocalDocument(filePath) {
@@ -360,45 +368,33 @@ function parseLocalDocument(filePath) {
 }
 
 function saveLocalFileAtomic(filePath, data) {
-  const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmp = path.join(dir, `.profile-library-${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2)}.tmp`);
   const text = JSON.stringify(data, null, 2);
   if (Buffer.byteLength(text, 'utf8') > MAX_LOCAL_FILE_BYTES) {
     throw new Error('Profile library local file would exceed the bounded size');
   }
-  try {
-    fs.writeFileSync(tmp, text, 'utf8');
-    fs.renameSync(tmp, filePath);
-  } catch (err) {
-    try {
-      if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-    } catch {
-      // ignore tmp cleanup
-    }
-    throw err;
-  }
+  storeFile.writeTextFileAtomic(filePath, text);
 }
 
 function readDevice(filePath, deviceKey) {
   const doc = parseLocalDocument(filePath);
   if (!doc.ok) {
-    return { ok: false, items: [], recovery: [], error: doc.error, unwritable: true, recovered: true };
+    return { ok: false, items: [], recovery: [], rev: 0, error: doc.error, unwritable: true, recovered: true };
   }
   const device = doc.data.devices && doc.data.devices[deviceKey];
-  if (!device) return { ok: true, items: [], recovery: [] };
+  if (!device) return { ok: true, items: [], recovery: [], rev: 0 };
   const checked = validateDeviceRecord(device);
   if (!checked.valid) {
     return {
       ok: false,
       items: [],
       recovery: [],
+      rev: 0,
       error: checked.error || 'Profile library device record is malformed',
       unwritable: true,
       recovered: true
     };
   }
-  return { ok: true, items: checked.items, recovery: checked.recovery };
+  return { ok: true, items: checked.items, recovery: checked.recovery, rev: checked.rev };
 }
 
 function writeDevice(filePath, deviceKey, items, options = {}) {
@@ -412,19 +408,27 @@ function writeDevice(filePath, deviceKey, items, options = {}) {
   }
   const file = doc.data;
   if (!file.devices) file.devices = {};
+  let currentRev = 0;
   if (file.devices[deviceKey]) {
     const existing = validateDeviceRecord(file.devices[deviceKey]);
     if (!existing.valid) {
       throw new Error(`${existing.error || 'Local profile library file is malformed'}; existing file was left unchanged`);
     }
+    currentRev = existing.rev;
   } else if (Object.keys(file.devices).length >= MAX_LOCAL_DEVICES) {
     throw new Error('Profile library local store is at the device limit');
+  }
+  if (options.expectedRev !== undefined && options.expectedRev !== currentRev) {
+    const conflict = new Error(`Profile library changed on disk since it was read (expected rev ${options.expectedRev}, found rev ${currentRev}); existing file was left unchanged`);
+    conflict.code = 'REV_MISMATCH';
+    throw conflict;
   }
   if (!isPlainObject(file.devices[deviceKey])) {
     file.devices[deviceKey] = { model: MODEL, items: [], recovery: [] };
   }
   file.devices[deviceKey].model = MODEL;
   file.devices[deviceKey].items = incoming.items;
+  file.devices[deviceKey].rev = currentRev + 1;
   if (options.identityKind) file.devices[deviceKey].identityKind = options.identityKind;
   if (options.recovery) {
     const rec = validateRecoveryArray(options.recovery);
@@ -452,7 +456,12 @@ function createFromDefaults(items, name, onboardOrdinaryCount, existingNames = [
   if (!cap.valid) return cap;
   const chosen = names.uniqueLocalName(name || 'New configuration 1', items.concat(existingNames));
   if (!chosen) return { valid: false, error: 'Could not allocate a unique configuration name' };
-  const made = makeItem(chosen, defaultNativeSnapshot());
+  let made;
+  try {
+    made = makeItem(chosen, defaultNativeSnapshot());
+  } catch (err) {
+    return { valid: false, error: err.message || String(err) };
+  }
   if (!made.valid) return made;
   return { valid: true, item: made.item, items: [made.item, ...items] };
 }
@@ -512,6 +521,7 @@ function snapshot(onboard, localItems, extras = {}) {
   const ordinaryOnboard = board.filter((p) => p && p.type === KEYBOARD_TYPE).length;
   const remaining = Math.max(0, ordinaryRemaining(ordinaryOnboard, local.length));
   return {
+    ...extras,
     onboard: board,
     local: local.map((item) => ({
       key: item.key,
@@ -532,8 +542,7 @@ function snapshot(onboard, localItems, extras = {}) {
     recoveryCount: extras.recoveryCount || 0,
     names: extras.names || [],
     namesSource: extras.namesSource || 'default',
-    progress: extras.progress || null,
-    ...extras
+    progress: extras.progress || null
   };
 }
 

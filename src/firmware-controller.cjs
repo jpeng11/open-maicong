@@ -13,6 +13,8 @@
  */
 
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const firmware = require('./firmware-protocol.cjs');
 const firmwareBackup = require('./firmware-backup.cjs');
@@ -77,6 +79,24 @@ function safeProgress(callback, event) {
 
 function methodAvailable(object, name) {
   return Boolean(object && typeof object[name] === 'function');
+}
+
+function resolveBootAnchorPath({ backupDir, anchorPath } = {}) {
+  if (typeof anchorPath === 'string' && anchorPath) return anchorPath;
+  return firmwareBackup.bootAnchorPath(backupDir);
+}
+
+function backupFilePresent(filePath) {
+  if (typeof filePath !== 'string' || !filePath) return false;
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function confirmationAccepted(options = {}) {
+  return options.confirmed === true || options.confirm === true || options.confirmation === true;
 }
 
 class FirmwareUpdateController {
@@ -145,7 +165,8 @@ class FirmwareUpdateController {
       restorationVerified: Boolean(restoration && restoration.restorationVerified),
       partialRestoration,
       progress: operation ? operation.progress.slice() : [],
-      ownershipReleased: details.ownershipReleased
+      ownershipReleased: details.ownershipReleased,
+      resumedFromBoot: Boolean(operation && operation.resumedFromBoot)
     };
     if (details.stale) result.stale = true;
     if (details.rejected) result.rejected = true;
@@ -181,6 +202,7 @@ class FirmwareUpdateController {
       restorationVerified: true,
       partialRestoration: false,
       ownershipReleased: true,
+      resumedFromBoot: Boolean(operation.resumedFromBoot),
       progress: operation.progress.slice()
     };
   }
@@ -355,6 +377,19 @@ class FirmwareUpdateController {
     }
   }
 
+  // A GET_INFO reply admitted through the echoed-checksum quirk exception (see
+  // protocol.decodePacket) proves the request was heard, not that the payload
+  // is intact, so it can never gate completion. Retry the read on a fresh
+  // request and fail closed if the device keeps echoing.
+  async _readTrustedFirmwareInfo(identity, ownerToken) {
+    let result = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      result = await this.transport.readFirmwareInfo({ identity, ownerToken });
+      if (!result || result.checksumEchoed !== true) break;
+    }
+    return result;
+  }
+
   _requiredStartHooks() {
     const required = [
       'acquireFirmwareOwnership',
@@ -378,7 +413,7 @@ class FirmwareUpdateController {
     if (this._operation) {
       return { success: false, fullUpdaterSuccess: false, error: 'A firmware update is already in progress', reason: 'busy' };
     }
-    if (options.confirmed !== true && options.confirm !== true && options.confirmation !== true) {
+    if (!confirmationAccepted(options)) {
       return { success: false, fullUpdaterSuccess: false, error: 'Explicit firmware update confirmation is required', reason: 'confirmation-required' };
     }
     const validatedToken = this._validateToken(reviewToken);
@@ -422,7 +457,10 @@ class FirmwareUpdateController {
       backupResult: null,
       versionResult: null,
       restorationResult: null,
-      abortListener: null
+      abortListener: null,
+      bootAnchorPath: null,
+      bootAnchorPersisted: false,
+      bootAnchorCleared: false
     };
     this._operation = operation;
     this._reviews.delete(record.token.reviewId);
@@ -432,8 +470,641 @@ class FirmwareUpdateController {
       else options.signal.addEventListener('abort', operation.abortListener, { once: true });
     }
 
-    let outcome = null;
+    let outcome;
+    let cleanup;
+    try {
+      outcome = await this._runUpdate(operation, options);
+    } finally {
+      try {
+        cleanup = await this._cleanupOperation(operation, options);
+      } catch (error) {
+        cleanup = { closeError: error.message || String(error), releaseError: null };
+      }
+    }
+    return this._adjustOutcome(operation, outcome, cleanup);
+  }
+
+  interruptedUpdateStatus(options = {}) {
+    const filePath = resolveBootAnchorPath(options);
+    if (!filePath) {
+      return {
+        success: false,
+        present: false,
+        error: 'A backup directory or boot-anchor path is required',
+        reason: 'backup-required'
+      };
+    }
+    const read = firmwareBackup.readBootAnchor(filePath);
+    if (read.missing) {
+      return { success: true, present: false, missing: true, filePath };
+    }
+    if (!read.success) {
+      return {
+        success: false,
+        present: false,
+        error: read.error || 'Boot recovery anchor could not be read',
+        reason: 'invalid-anchor',
+        filePath,
+        retained: read.retained === true
+      };
+    }
+    return {
+      success: true,
+      present: true,
+      anchor: read.anchor,
+      filePath,
+      backupPresent: backupFilePresent(read.anchor && read.anchor.backupPath)
+    };
+  }
+
+  discardInterruptedUpdate(options = {}) {
+    if (this._operation) {
+      return { success: false, error: 'A firmware update is already in progress', reason: 'busy' };
+    }
+    const filePath = resolveBootAnchorPath(options);
+    if (!filePath) {
+      return {
+        success: false,
+        cleared: false,
+        error: 'A backup directory or boot-anchor path is required',
+        reason: 'backup-required'
+      };
+    }
+    const cleared = firmwareBackup.clearBootAnchor(filePath);
+    if (!cleared.success) {
+      return {
+        success: false,
+        cleared: false,
+        error: cleared.error || 'Boot recovery anchor could not be discarded',
+        reason: 'invalid-anchor',
+        filePath
+      };
+    }
+    return {
+      success: true,
+      cleared: cleared.cleared === true,
+      filePath
+    };
+  }
+
+  /**
+   * Resume a transfer whose previous run left the device in bootloader mode.
+   * There is no normal collection to own yet, so this path never calls
+   * openNormal and never takes exclusive transport ownership until the
+   * device is proven back in normal mode.
+   */
+  async resumeInterruptedUpdate(options = {}) {
+    if (this._operation) {
+      return { success: false, fullUpdaterSuccess: false, error: 'A firmware update is already in progress', reason: 'busy' };
+    }
+    if (!confirmationAccepted(options)) {
+      return { success: false, fullUpdaterSuccess: false, error: 'Explicit firmware update confirmation is required', reason: 'confirmation-required' };
+    }
+    const missingHooks = this._requiredRecoveryHooks();
+    if (missingHooks.length > 0) {
+      return {
+        success: false,
+        fullUpdaterSuccess: false,
+        error: `Firmware updater integration is incomplete: missing ${missingHooks.join(', ')}`,
+        reason: 'unsupported'
+      };
+    }
+
+    const filePath = resolveBootAnchorPath(options);
+    if (!filePath) {
+      return {
+        success: false,
+        fullUpdaterSuccess: false,
+        error: 'A backup directory or boot-anchor path is required',
+        reason: 'backup-required',
+        dispatched: false,
+        uncertain: false
+      };
+    }
+    const read = firmwareBackup.readBootAnchor(filePath);
+    if (read.missing) {
+      return {
+        success: false,
+        fullUpdaterSuccess: false,
+        error: 'No interrupted firmware update is waiting to be resumed',
+        reason: 'missing-anchor',
+        dispatched: false,
+        uncertain: false,
+        filePath
+      };
+    }
+    if (!read.success || !read.anchor) {
+      return {
+        success: false,
+        fullUpdaterSuccess: false,
+        error: (read && read.error) || 'Boot recovery anchor is missing or malformed',
+        reason: 'invalid-anchor',
+        dispatched: false,
+        uncertain: false,
+        filePath
+      };
+    }
+    const anchor = read.anchor;
+    const backupPath = typeof options.backupPath === 'string' && options.backupPath
+      ? options.backupPath
+      : (typeof anchor.backupPath === 'string' && anchor.backupPath ? anchor.backupPath : null);
+    if (!backupFilePresent(backupPath)) {
+      return {
+        success: false,
+        fullUpdaterSuccess: false,
+        error: 'The interrupted update backup file is missing; recovery cannot restore configuration',
+        reason: 'backup-missing',
+        dispatched: false,
+        uncertain: false,
+        filePath,
+        backupPath
+      };
+    }
+
+    const packageInfo = firmware.validateFirmwarePackage(options.packageBytes, anchor.targetKey, { catalog: this.catalog });
+    if (!packageInfo.valid) {
+      return {
+        success: false,
+        fullUpdaterSuccess: false,
+        error: packageInfo.error,
+        reason: 'invalid-package',
+        dispatched: false,
+        uncertain: false
+      };
+    }
+    if (options.allowDifferentPackage !== true) {
+      if (!firmwareBackup.isPackageSha256(anchor.packageSha256)) {
+        return {
+          success: false,
+          fullUpdaterSuccess: false,
+          error: 'Boot recovery anchor package SHA-256 is missing or malformed',
+          reason: 'invalid-anchor',
+          dispatched: false,
+          uncertain: false
+        };
+      }
+      if (anchor.packageSha256 !== packageInfo.sha256) {
+        return {
+          success: false,
+          fullUpdaterSuccess: false,
+          error: 'Firmware package does not match the interrupted update; pass allowDifferentPackage to reflash anyway',
+          reason: 'package-mismatch',
+          dispatched: false,
+          uncertain: false
+        };
+      }
+    }
+
+    const operation = {
+      id: crypto.randomUUID(),
+      review: {
+        target: packageInfo.target,
+        packageInfo,
+        identity: null,
+        currentVersion: null,
+        backupPath
+      },
+      backupPath,
+      onProgress: options.onProgress,
+      progress: [],
+      cancelRequested: false,
+      cancelReason: null,
+      ownerToken: null,
+      nativeIo: null,
+      nativeClosed: false,
+      transfer: null,
+      transferResult: null,
+      backupResult: {
+        success: true,
+        persisted: true,
+        backupRetained: true,
+        filePath: backupPath
+      },
+      versionResult: null,
+      restorationResult: null,
+      abortListener: null,
+      bootAnchorPath: filePath,
+      bootAnchorPersisted: true,
+      bootAnchorCleared: false,
+      resumedFromBoot: true,
+      bootAnchor: anchor
+    };
+    this._operation = operation;
+    if (options.signal && typeof options.signal.addEventListener === 'function') {
+      operation.abortListener = () => this.cancel('Firmware update cancelled by user');
+      if (options.signal.aborted) operation.abortListener();
+      else options.signal.addEventListener('abort', operation.abortListener, { once: true });
+    }
+
+    let outcome;
+    let cleanup;
+    try {
+      outcome = await this._runRecovery(operation, options);
+    } finally {
+      try {
+        cleanup = await this._cleanupOperation(operation, options);
+      } catch (error) {
+        cleanup = { closeError: error.message || String(error), releaseError: null };
+      }
+    }
+    return this._adjustOutcome(operation, outcome, cleanup);
+  }
+
+  _requiredRecoveryHooks() {
+    const missing = this._requiredStartHooks();
+    if (!methodAvailable(this.transport, 'connect')) missing.push('connect');
+    return missing;
+  }
+
+  /**
+   * Releases every resource the operation held. It never determines the
+   * return value: close/release failures are handed to _adjustOutcome, which
+   * adjusts the result before the single real return, so they cannot be
+   * discarded by a return value already captured inside a try.
+   */
+  async _cleanupOperation(operation, options = {}) {
+    let closeError = null;
     let releaseError = null;
+    try {
+      if (operation.abortListener && options.signal && typeof options.signal.removeEventListener === 'function') {
+        options.signal.removeEventListener('abort', operation.abortListener);
+      }
+      if (operation.nativeIo && !operation.nativeClosed) {
+        closeError = await this._closeNative(operation);
+      }
+      if (operation.ownerToken) {
+        try {
+          const released = await this.transport.releaseFirmwareOwnership(operation.ownerToken);
+          if (!released || !released.success) releaseError = (released && released.error) || 'Firmware transport ownership could not be released';
+        } catch (error) {
+          releaseError = error.message || String(error);
+        }
+      }
+    } finally {
+      this._operation = null;
+    }
+    return { closeError, releaseError };
+  }
+
+  _adjustOutcome(operation, outcome, { closeError = null, releaseError = null } = {}) {
+    let result = outcome;
+    if (!result || typeof result.success !== 'boolean') {
+      result = this._resultFailure(operation, {
+        failedPhase: 'controller',
+        reason: 'controller-error',
+        error: 'Firmware update returned no structured outcome',
+        uncertain: true,
+        backupRetained: true
+      });
+    }
+    if (closeError && result.success) {
+      result = this._resultFailure(operation, {
+        failedPhase: 'native-close',
+        reason: 'handoff-failed',
+        error: closeError,
+        uncertain: true,
+        backupRetained: true
+      });
+    }
+    if (releaseError && result.success) {
+      result = this._resultFailure(operation, {
+        failedPhase: 'handoff-release',
+        reason: 'handoff-failed',
+        error: releaseError,
+        uncertain: true,
+        backupRetained: true,
+        ownershipReleased: false
+      });
+    }
+    result.ownershipReleased = !releaseError;
+    result.progress = operation.progress.slice();
+    return result;
+  }
+
+  /**
+   * Persists the boot recovery anchor next to the backup file. The transfer
+   * coordinator invokes this immediately before enter-boot is dispatched and
+   * aborts pre-mutation when it throws, so an interrupted update is always
+   * resumable from the dispatch moment on.
+   */
+  _persistBootAnchor(operation, anchorData) {
+    const record = operation.review;
+    const anchorPath = firmwareBackup.bootAnchorPath(path.dirname(operation.backupPath));
+    if (!anchorPath) throw new Error('A backup directory is required to persist the boot recovery anchor');
+    const field = record.target.package && record.target.package.firmwareField;
+    const rawKey = field ? `raw${field[0].toUpperCase()}${field.slice(1)}` : null;
+    const beforeVersionRaw = rawKey && record.currentVersion && Number.isInteger(record.currentVersion[rawKey])
+      ? record.currentVersion[rawKey]
+      : null;
+    const written = firmwareBackup.writeBootAnchor(anchorPath, {
+      schema: firmwareBackup.BOOT_ANCHOR_SCHEMA,
+      version: firmwareBackup.BOOT_ANCHOR_SCHEMA_VERSION,
+      targetKey: anchorData.targetKey,
+      locationId: anchorData.locationId,
+      serialNumber: anchorData.serialNumber || null,
+      packageSha256: anchorData.packageSha256,
+      backupPath: operation.backupPath,
+      firmwareField: field || null,
+      beforeVersionRaw,
+      enteredAt: safeNow(this.clock)
+    });
+    if (!written.success) throw new Error(written.error || 'Boot recovery anchor could not be persisted');
+    operation.bootAnchorPath = anchorPath;
+    operation.bootAnchorPersisted = true;
+  }
+
+  // The anchor only applies while the device may sit in bootloader mode. Once
+  // the device is verifiably back in normal mode (or never left it), keeping
+  // the anchor would only raise a spurious resume prompt.
+  _clearBootAnchor(operation) {
+    if (!operation.bootAnchorPath) return;
+    const cleared = firmwareBackup.clearBootAnchor(operation.bootAnchorPath);
+    operation.bootAnchorCleared = cleared.success === true;
+  }
+
+  /**
+   * Post-update success predicate: the reconnected device must prove its
+   * identity and report a trusted (non-echoed) version matching the catalog
+   * pin. Same-version readback is success when the transfer already verified
+   * the write. Returns null on success or a structured failure outcome.
+   * Callers must restore erased configuration before invoking this.
+   */
+  async _runVersionGate(operation, { returnedIdentity, pkg, beforeRaw, beforeSnapshot = null, failureMessage }) {
+    this._emit(operation, 'version-readback', { percent: 99, message: 'Reading the actual MCU/RF version from the reconnected device' });
+    const afterVersion = await this._readTrustedFirmwareInfo(returnedIdentity, operation.ownerToken);
+    const expectedField = pkg && pkg.firmwareField;
+    const expectedRaw = pkg && (Number.isInteger(pkg.versionRaw) ? pkg.versionRaw : pkg.versionNumber);
+    const actualInfo = afterVersion && afterVersion.info;
+    const rawKey = expectedField ? `raw${expectedField[0].toUpperCase()}${expectedField.slice(1)}` : null;
+    const actualRaw = actualInfo && rawKey ? actualInfo[rawKey] : null;
+    const identityVerified = Boolean(
+      afterVersion && afterVersion.success && afterVersion.checksumEchoed !== true && afterVersion.identity
+      && firmwareBackup.identitiesMatch(returnedIdentity, afterVersion.identity)
+    );
+    const versionMatched = identityVerified && firmware.catalogVersionMatchesRaw(actualRaw, pkg);
+    operation.versionResult = {
+      before: beforeSnapshot,
+      after: versionSnapshot(actualInfo),
+      field: expectedField,
+      expected: expectedRaw,
+      beforeRaw: Number.isInteger(beforeRaw) ? beforeRaw : null,
+      actual: Number.isInteger(actualRaw) ? actualRaw : null,
+      matched: versionMatched
+    };
+    if (versionMatched) return null;
+    const echoed = Boolean(afterVersion && afterVersion.checksumEchoed === true);
+    return this._resultFailure(operation, {
+      failedPhase: 'version-readback',
+      reason: echoed ? 'version-untrusted' : 'version-mismatch',
+      error: echoed
+        ? 'Post-update version readback arrived with an echoed checksum and cannot be trusted'
+        : ((afterVersion && afterVersion.error) || failureMessage || `Post-update ${expectedField || 'firmware'} version did not match the reviewed catalog package`),
+      uncertain: true,
+      backupRetained: true,
+      version: operation.versionResult
+    });
+  }
+
+  async _restoreThenEvaluateVersion(operation, {
+    returnedIdentity,
+    pkg,
+    beforeRaw,
+    beforeSnapshot = null,
+    backupPath
+  }) {
+    this._emit(operation, 'restore', { percent: 99, message: 'Restoring the persisted complete configuration and verifying readback' });
+    operation.restorationResult = await this.transport.restoreFirmwareConfiguration(backupPath, {
+      filePath: backupPath,
+      identity: returnedIdentity,
+      ownerToken: operation.ownerToken,
+      onProgress: event => this._emit(operation, `restore:${event.phase || 'progress'}`, {
+        percent: event.percent,
+        message: event.message || 'Restoring firmware configuration'
+      })
+    });
+    if (!operation.restorationResult || !operation.restorationResult.success
+      || operation.restorationResult.restorationVerified !== true) {
+      return this._resultFailure(operation, {
+        failedPhase: (operation.restorationResult && operation.restorationResult.failedSection) || 'restore',
+        reason: 'restoration-failed',
+        error: (operation.restorationResult && operation.restorationResult.error) || 'Configuration restoration was not verified',
+        uncertain: Boolean(operation.restorationResult && operation.restorationResult.uncertain),
+        backupRetained: true
+      });
+    }
+
+    const versionFailure = await this._runVersionGate(operation, {
+      returnedIdentity,
+      pkg,
+      beforeRaw,
+      beforeSnapshot
+    });
+    if (versionFailure) return versionFailure;
+
+    this._emit(operation, 'complete', { state: 'completed', percent: 100, message: 'Firmware version and complete configuration restoration verified' });
+    const outcome = this._resultSuccess(operation);
+    outcome.bootAnchorCleared = operation.bootAnchorCleared === true;
+    return outcome;
+  }
+
+  /**
+   * Recovery body for a device already in bootloader mode. Native IO is
+   * constructed without openNormal, and exclusive ownership is taken only
+   * after transport.connect() on the proven normal path — connectFirmwareNormal
+   * requires an owner token this run does not yet hold.
+   */
+  async _runRecovery(operation, options = {}) {
+    const record = operation.review;
+    const anchor = operation.bootAnchor;
+    const backupPath = operation.backupPath;
+    let outcome = null;
+    try {
+      this._emit(operation, 'preflight', { percent: 0, message: 'Confirming the interrupted bootloader against the persisted anchor' });
+      if (operation.cancelRequested) {
+        outcome = this._checkCancelled(operation, 'preflight');
+        return outcome;
+      }
+
+      operation.nativeIo = await this.nativeIoFactory({
+        target: record.target.key,
+        catalog: this.catalog,
+        timeouts: this.timeouts
+      });
+      if (!operation.nativeIo || !methodAvailable(operation.nativeIo, 'waitForIdentity')) {
+        outcome = this._resultFailure(operation, {
+          failedPhase: 'native-open',
+          reason: 'unsupported',
+          error: 'Native firmware IO adapter cannot rediscover the interrupted bootloader',
+          backupRetained: true,
+          dispatched: false,
+          uncertain: false
+        });
+        return outcome;
+      }
+
+      operation.transfer = this.transferFactory({
+        io: operation.nativeIo,
+        target: record.target.key,
+        catalog: this.catalog,
+        packageBytes: record.packageInfo.bytes,
+        timeouts: this.timeouts,
+        signal: options.signal,
+        onProgress: event => this._emit(operation, event.phase, {
+          percent: event.percent,
+          message: event.message,
+          state: event.state,
+          failedPhase: event.failedPhase,
+          reason: event.reason
+        })
+      });
+      if (!operation.transfer || !methodAvailable(operation.transfer, 'run')) {
+        outcome = this._resultFailure(operation, {
+          failedPhase: 'preflight',
+          reason: 'unsupported',
+          error: 'Firmware transfer coordinator is unavailable',
+          backupRetained: true,
+          dispatched: false,
+          uncertain: false
+        });
+        return outcome;
+      }
+
+      const transferResult = await operation.transfer.run({
+        resumeFromBoot: true,
+        bootAnchor: anchor,
+        allowDifferentPackage: options.allowDifferentPackage === true,
+        target: record.target.key,
+        catalog: this.catalog,
+        packageBytes: record.packageInfo.bytes,
+        timeouts: this.timeouts,
+        signal: options.signal
+      });
+      operation.transferResult = transferResult;
+      if (!transferResult || !transferResult.success) {
+        outcome = this._resultFailure(operation, {
+          failedPhase: (transferResult && transferResult.failedPhase) || 'transfer',
+          reason: (transferResult && transferResult.reason) || 'transfer-failed',
+          error: (transferResult && transferResult.error) || 'Firmware recovery transfer failed',
+          uncertain: Boolean(transferResult && transferResult.uncertain),
+          rejected: Boolean(transferResult && transferResult.rejected),
+          dispatched: transferResult && transferResult.dispatched,
+          dispatchStatus: transferResult && transferResult.dispatchStatus,
+          backupRetained: true
+        });
+        return outcome;
+      }
+      if (operation.cancelRequested) {
+        outcome = this._resultFailure(operation, {
+          failedPhase: 'transfer',
+          reason: 'cancelled',
+          error: operation.cancelReason || 'Firmware update cancelled by user',
+          uncertain: Boolean(transferResult.uncertain),
+          backupRetained: true
+        });
+        return outcome;
+      }
+
+      const returnedIdentity = transferResult.returnedNormalIdentity;
+      const evidence = firmware.transitionIdentityEvidence(anchor, returnedIdentity);
+      if (!returnedIdentity || !firmware.matchesNormalIdentity(returnedIdentity, record.target, this.catalog)
+        || !evidence.match) {
+        outcome = this._resultFailure(operation, {
+          failedPhase: 'normal-reconnect',
+          reason: 'ambiguous-identity',
+          error: 'Recovery returned without a verified same-device normal identity',
+          uncertain: true,
+          backupRetained: true
+        });
+        return outcome;
+      }
+      operation.review.identity = identitySnapshot(returnedIdentity);
+      // The device is verifiably back in normal mode, so the persisted boot
+      // recovery anchor no longer applies. Restore still runs if the later
+      // version predicate fails.
+      this._clearBootAnchor(operation);
+
+      this._emit(operation, 'native-close', { percent: 98, message: 'Closing the native handle before normal transport reconnect' });
+      const nativeCloseError = await this._closeNative(operation);
+      if (nativeCloseError) {
+        outcome = this._resultFailure(operation, {
+          failedPhase: 'native-close',
+          reason: 'handoff-failed',
+          error: nativeCloseError,
+          uncertain: true,
+          backupRetained: true
+        });
+        return outcome;
+      }
+
+      this._emit(operation, 'normal-reconnect', { percent: 98, message: 'Reconnecting the verified normal HID path' });
+      const connected = this.transport.connect(returnedIdentity.path);
+      if (!connected || !connected.success) {
+        outcome = this._resultFailure(operation, {
+          failedPhase: 'normal-reconnect',
+          reason: (connected && connected.reason) || 'ambiguous-identity',
+          error: (connected && connected.error) || 'Verified normal transport reconnect failed',
+          stale: Boolean(connected && connected.stale),
+          uncertain: true,
+          backupRetained: true
+        });
+        return outcome;
+      }
+
+      const acquired = await this.transport.acquireFirmwareOwnership(returnedIdentity, {
+        drainTimeoutMs: options.drainTimeoutMs
+      });
+      if (!acquired || !acquired.success || !acquired.token) {
+        outcome = this._resultFailure(operation, {
+          failedPhase: 'handoff',
+          reason: (acquired && acquired.reason) || 'handoff-failed',
+          error: (acquired && acquired.error) || 'Normal transport could not be handed off exclusively',
+          backupRetained: true,
+          uncertain: true
+        });
+        return outcome;
+      }
+      operation.ownerToken = acquired.token;
+      if (acquired.identity && !firmwareBackup.identitiesMatch(returnedIdentity, acquired.identity)) {
+        outcome = this._resultFailure(operation, {
+          failedPhase: 'handoff',
+          reason: 'ambiguous-identity',
+          error: 'The device identity changed during exclusive handoff after recovery',
+          stale: true,
+          backupRetained: true,
+          uncertain: true
+        });
+        return outcome;
+      }
+
+      outcome = await this._restoreThenEvaluateVersion(operation, {
+        returnedIdentity,
+        pkg: record.target.package,
+        beforeRaw: anchor.beforeVersionRaw,
+        beforeSnapshot: null,
+        backupPath
+      });
+      return outcome;
+    } catch (error) {
+      outcome = this._resultFailure(operation, {
+        failedPhase: (operation.transferResult && operation.transferResult.failedPhase) || 'controller',
+        reason: operation.cancelRequested ? 'cancelled' : (error.reason || 'controller-error'),
+        error: error.message || String(error),
+        uncertain: Boolean(operation.transferResult && operation.transferResult.uncertain),
+        backupRetained: Boolean(operation.backupResult && (operation.backupResult.persisted || operation.backupResult.backupRetained))
+      });
+      return outcome;
+    }
+  }
+
+  /**
+   * The update body. Every path returns a structured outcome and the catch-all
+   * converts unexpected throws, so the caller's cleanup section never has to
+   * influence the return value.
+   */
+  async _runUpdate(operation, options = {}) {
+    const record = operation.review;
+    const backupPath = operation.backupPath;
+    let outcome = null;
     try {
       this._emit(operation, 'preflight', { percent: 0, message: 'Rechecking the reviewed device identity and current version' });
       if (operation.cancelRequested) {
@@ -605,23 +1276,29 @@ class FirmwareUpdateController {
         packageBytes: record.packageInfo.bytes,
         normalIdentity: record.identity,
         timeouts: this.timeouts,
-        signal: options.signal
+        signal: options.signal,
+        onBootAnchor: anchorData => this._persistBootAnchor(operation, anchorData)
       });
       operation.transferResult = transferResult;
-      if (!transferResult || !transferResult.success || transferResult.fullUpdaterSuccess === true) {
-        if (!transferResult || !transferResult.success) {
-          outcome = this._resultFailure(operation, {
-            failedPhase: (transferResult && transferResult.failedPhase) || 'transfer',
-            reason: (transferResult && transferResult.reason) || 'transfer-failed',
-            error: (transferResult && transferResult.error) || 'Firmware transfer failed',
-            uncertain: Boolean(transferResult && transferResult.uncertain),
-            rejected: Boolean(transferResult && transferResult.rejected),
-            dispatched: transferResult && transferResult.dispatched,
-            dispatchStatus: transferResult && transferResult.dispatchStatus,
-            backupRetained: true
-          });
-          return outcome;
+      if (!transferResult || !transferResult.success) {
+        // enter-boot proven not dispatched means the device never left
+        // normal mode, so an anchor persisted during this run is stale.
+        if (operation.bootAnchorPersisted && transferResult
+          && transferResult.failedPhase === 'enter-boot'
+          && (transferResult.dispatchStatus === 'no' || transferResult.dispatched === false)) {
+          this._clearBootAnchor(operation);
         }
+        outcome = this._resultFailure(operation, {
+          failedPhase: (transferResult && transferResult.failedPhase) || 'transfer',
+          reason: (transferResult && transferResult.reason) || 'transfer-failed',
+          error: (transferResult && transferResult.error) || 'Firmware transfer failed',
+          uncertain: Boolean(transferResult && transferResult.uncertain),
+          rejected: Boolean(transferResult && transferResult.rejected),
+          dispatched: transferResult && transferResult.dispatched,
+          dispatchStatus: transferResult && transferResult.dispatchStatus,
+          backupRetained: true
+        });
+        return outcome;
       }
       if (operation.cancelRequested) {
         outcome = this._resultFailure(operation, {
@@ -646,6 +1323,9 @@ class FirmwareUpdateController {
         });
         return outcome;
       }
+      // The device is verifiably back in normal mode, so the boot recovery
+      // anchor persisted at enter-boot no longer applies.
+      this._clearBootAnchor(operation);
 
       this._emit(operation, 'native-close', { percent: 98, message: 'Closing the native handle before normal transport reconnect' });
       const nativeCloseError = await this._closeNative(operation);
@@ -674,65 +1354,16 @@ class FirmwareUpdateController {
         return outcome;
       }
 
-      this._emit(operation, 'version-readback', { percent: 99, message: 'Reading the actual MCU/RF version from the reconnected device' });
-      const afterVersion = await this.transport.readFirmwareInfo({
-        identity: returnedIdentity,
-        ownerToken: operation.ownerToken
+      const gateField = record.target.package && record.target.package.firmwareField;
+      const gateRawKey = gateField ? `raw${gateField[0].toUpperCase()}${gateField.slice(1)}` : null;
+      const beforeRaw = record.currentVersion && gateRawKey ? record.currentVersion[gateRawKey] : null;
+      outcome = await this._restoreThenEvaluateVersion(operation, {
+        returnedIdentity,
+        pkg: record.target.package,
+        beforeRaw,
+        beforeSnapshot: record.currentVersion,
+        backupPath
       });
-      const expectedField = record.target.package && record.target.package.firmwareField;
-      const expectedRaw = record.target.package && record.target.package.versionNumber;
-      const actualInfo = afterVersion && afterVersion.info;
-      const actualRaw = actualInfo && expectedField ? actualInfo[`raw${expectedField[0].toUpperCase()}${expectedField.slice(1)}`] : null;
-      const identityVerified = Boolean(
-        afterVersion && afterVersion.success && afterVersion.identity
-        && firmwareBackup.identitiesMatch(returnedIdentity, afterVersion.identity)
-      );
-      const versionMatched = identityVerified
-        && Number.isInteger(actualRaw)
-        && firmware.catalogVersionMatchesRaw(actualRaw, record.target.package);
-      operation.versionResult = {
-        before: record.currentVersion,
-        after: versionSnapshot(actualInfo),
-        field: expectedField,
-        expected: expectedRaw,
-        actual: Number.isInteger(actualRaw) ? actualRaw : null,
-        matched: versionMatched
-      };
-      if (!operation.versionResult.matched) {
-        outcome = this._resultFailure(operation, {
-          failedPhase: 'version-readback',
-          reason: 'version-mismatch',
-          error: (afterVersion && afterVersion.error) || `Post-update ${expectedField || 'firmware'} version did not match the reviewed catalog package`,
-          uncertain: true,
-          backupRetained: true,
-          version: operation.versionResult
-        });
-        return outcome;
-      }
-
-      this._emit(operation, 'restore', { percent: 99, message: 'Restoring the persisted complete configuration and verifying readback' });
-      operation.restorationResult = await this.transport.restoreFirmwareConfiguration(backupPath, {
-        filePath: backupPath,
-        identity: returnedIdentity,
-        ownerToken: operation.ownerToken,
-        onProgress: event => this._emit(operation, `restore:${event.phase || 'progress'}`, {
-          percent: event.percent,
-          message: event.message || 'Restoring firmware configuration'
-        })
-      });
-      if (!operation.restorationResult || !operation.restorationResult.success
-        || operation.restorationResult.restorationVerified !== true) {
-        outcome = this._resultFailure(operation, {
-          failedPhase: (operation.restorationResult && operation.restorationResult.failedSection) || 'restore',
-          reason: 'restoration-failed',
-          error: (operation.restorationResult && operation.restorationResult.error) || 'Configuration restoration was not verified',
-          uncertain: Boolean(operation.restorationResult && operation.restorationResult.uncertain),
-          backupRetained: true
-        });
-        return outcome;
-      }
-      this._emit(operation, 'complete', { state: 'completed', percent: 100, message: 'Firmware version and complete configuration restoration verified' });
-      outcome = this._resultSuccess(operation);
       return outcome;
     } catch (error) {
       outcome = this._resultFailure(operation, {
@@ -743,44 +1374,6 @@ class FirmwareUpdateController {
         backupRetained: Boolean(operation.backupResult && (operation.backupResult.persisted || operation.backupResult.backupRetained))
       });
       return outcome;
-    } finally {
-      if (operation.abortListener && options.signal && typeof options.signal.removeEventListener === 'function') {
-        options.signal.removeEventListener('abort', operation.abortListener);
-      }
-      if (operation.nativeIo && !operation.nativeClosed) {
-        const closeError = await this._closeNative(operation);
-        if (closeError && outcome && outcome.success) {
-          outcome = this._resultFailure(operation, {
-            failedPhase: 'native-close',
-            reason: 'handoff-failed',
-            error: closeError,
-            uncertain: true,
-            backupRetained: true
-          });
-        }
-      }
-      if (operation.ownerToken) {
-        try {
-          const released = await this.transport.releaseFirmwareOwnership(operation.ownerToken);
-          if (!released || !released.success) releaseError = (released && released.error) || 'Firmware transport ownership could not be released';
-        } catch (error) {
-          releaseError = error.message || String(error);
-        }
-      }
-      if (releaseError && outcome && outcome.success) {
-        outcome = this._resultFailure(operation, {
-          failedPhase: 'handoff-release',
-          reason: 'handoff-failed',
-          error: releaseError,
-          uncertain: true,
-          backupRetained: true,
-          ownershipReleased: false
-        });
-      } else if (outcome) {
-        outcome.ownershipReleased = !releaseError;
-        outcome.progress = operation.progress.slice();
-      }
-      this._operation = null;
     }
   }
 }

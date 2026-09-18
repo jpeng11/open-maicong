@@ -51,7 +51,7 @@ function parseIoreg(text) {
     const hexVendorId = '0x' + vendorId.toString(16).padStart(4, '0').toUpperCase();
     const hexProductId = '0x' + productId.toString(16).padStart(4, '0').toUpperCase();
     const locationId = locationMatch ? parseInt(locationMatch[1], 10) : null;
-    const hexLocationId = locationId ? '0x' + locationId.toString(16).padStart(8, '0').toUpperCase() : null;
+    const hexLocationId = locationId != null ? '0x' + locationId.toString(16).padStart(8, '0').toUpperCase() : null;
 
     devices.push({
       id: `${hexVendorId}:${hexProductId}:${serialMatch ? serialMatch[1] : (hexLocationId || '0')}`,

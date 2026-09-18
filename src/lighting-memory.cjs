@@ -7,6 +7,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const storeFile = require('./store-file.cjs');
 
 const LIGHT_MEMORY_MARKER = Buffer.from('<light@v2>', 'ascii');
 const LIGHT_MEMORY_OFFSET = 728;
@@ -483,7 +484,7 @@ function parseLocalDocument(filePath) {
       };
     }
     const raw = fs.readFileSync(filePath, 'utf8');
-    if (raw.length > MAX_LOCAL_FILE_BYTES) {
+    if (Buffer.byteLength(raw, 'utf8') > MAX_LOCAL_FILE_BYTES) {
       return {
         ok: false,
         unwritable: true,
@@ -543,24 +544,11 @@ function loadLocalFile(filePath) {
 }
 
 function saveLocalFileAtomic(filePath, data) {
-  const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmp = path.join(dir, `.lighting-memory-${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2)}.tmp`);
   const text = JSON.stringify(data, null, 2);
   if (Buffer.byteLength(text, 'utf8') > MAX_LOCAL_FILE_BYTES) {
     throw new Error('Lighting memory local file would exceed the bounded size');
   }
-  try {
-    fs.writeFileSync(tmp, text, 'utf8');
-    fs.renameSync(tmp, filePath);
-  } catch (err) {
-    try {
-      if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-    } catch {
-      // ignore tmp cleanup
-    }
-    throw err;
-  }
+  storeFile.writeTextFileAtomic(filePath, text);
 }
 
 function readLocalProfile(filePath, deviceKey, profileIndex) {

@@ -311,6 +311,33 @@ describe('native firmware IO adapter', () => {
     assert.equal(fixture.handles[normalDevice.path].closed, true);
   });
 
+  test('inbound reports are sequence-stamped without listeners and drainDataSince yields only newer reports', async () => {
+    const fixture = fixtureAdapter([[normalDevice]]);
+    await fixture.adapter.openNormal({ target: 'receiver', reviewedIdentity: normalIdentity });
+    const handle = fixture.handles[normalDevice.path];
+    assert.equal(fixture.adapter.dataSequence, 0);
+
+    handle.emit('data', Buffer.from([1]));
+    handle.emit('data', Buffer.from([2]));
+    assert.equal(fixture.adapter.dataSequence, 2, 'reports must be stamped even with no listener registered');
+    handle.emit('data', Buffer.from([3]));
+
+    const fresh = fixture.adapter.drainDataSince(2);
+    assert.equal(fresh.length, 1);
+    assert.equal(fresh[0].sequence, 3);
+    assert.deepEqual(Array.from(fresh[0].data), [3]);
+    assert.equal(fixture.adapter.drainDataSince(3).length, 0);
+    assert.equal(fixture.adapter.drainDataSince('junk').length, 0);
+
+    const observed = [];
+    const unsubscribe = fixture.adapter.onData((data, meta) => observed.push({ data: Buffer.from(data), meta }));
+    handle.emit('data', Buffer.from([4]));
+    assert.equal(observed.length, 1);
+    assert.equal(observed[0].meta.sequence, 4);
+    unsubscribe();
+    await fixture.adapter.close();
+  });
+
   test('cancellation before the deferred enumeration invocation performs no HID call', async () => {
     const fixture = fixtureAdapter([[normalDevice]]);
     const pending = fixture.adapter.openNormal({ target: 'receiver', reviewedIdentity: normalIdentity });

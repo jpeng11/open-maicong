@@ -64,6 +64,7 @@ class DeviceTransport {
     this.activeQueue = Promise.resolve();
     this.transactionLock = Promise.resolve();
     this.responseListeners = new Set();
+    this._pendingExpectedRequest = null;
     this.isStandby = false;
     this.needsReconnect = false;
     this.statusError = null;
@@ -84,6 +85,9 @@ class DeviceTransport {
     this.gifLibraryPath = null;
     this.profileLibraryPath = null;
     this.profileAppBindPath = null;
+    // Parsed app-bind cache: the bind file only changes via this process, so
+    // reads are keyed on (file, device key) and refreshed on bind/unbind.
+    this._appBindCache = null;
     this.streamPaceMs = STREAM_UNSAFE_COMPLETE_MS;
 
     // Internal raw cached snapshots from verified reads
@@ -153,6 +157,7 @@ class DeviceTransport {
     this._streamPaceTimer = null;
     this._streamPaceResolve = null;
     this._transactionInFlight = false;
+    this._infoChecksumEchoed = false;
     // Firmware exclusive ownership is intentionally NOT cleared here. A
     // disconnect during an in-progress update must keep the owner token so
     // connectFirmwareNormal / releaseFirmwareOwnership can finish the handoff.
@@ -180,14 +185,19 @@ class DeviceTransport {
   }
 
   listAppBinds() {
-    const loaded = profileAppBind.readDevice(this._profileAppBindFile(), this._profileDeviceKey());
-    this.lastState.appBinds = loaded.ok ? loaded.binds : [];
-    this.lastState.appBindsError = loaded.ok ? null : (loaded.error || 'App binds unreadable');
-    return {
-      success: loaded.ok,
-      binds: loaded.ok ? loaded.binds : [],
-      error: loaded.ok ? null : loaded.error
-    };
+    const file = this._profileAppBindFile();
+    const key = this._profileDeviceKey();
+    const cache = this._appBindCache;
+    if (cache && cache.file === file && cache.key === key) {
+      return { success: cache.ok, binds: cache.binds, error: cache.error };
+    }
+    const loaded = profileAppBind.readDevice(file, key);
+    const binds = loaded.ok ? loaded.binds : [];
+    const error = loaded.ok ? null : (loaded.error || 'App binds unreadable');
+    this._appBindCache = { file, key, ok: loaded.ok, binds, error };
+    this.lastState.appBinds = binds;
+    this.lastState.appBindsError = error;
+    return { success: loaded.ok, binds, error: loaded.ok ? null : loaded.error };
   }
 
   bindProfileApp(spec = {}) {
@@ -200,6 +210,7 @@ class DeviceTransport {
     } catch (err) {
       return { success: false, error: err.message, unwritable: true };
     }
+    this._appBindCache = { file: this._profileAppBindFile(), key: this._profileDeviceKey(), ok: true, binds: next.binds, error: null };
     this.lastState.appBinds = next.binds;
     this._notifyStateChange();
     return { success: true, bind: next.bind, binds: next.binds };
@@ -217,6 +228,7 @@ class DeviceTransport {
         return { success: false, error: err.message, unwritable: true };
       }
     }
+    this._appBindCache = { file: this._profileAppBindFile(), key: this._profileDeviceKey(), ok: true, binds: next.binds, error: null };
     this.lastState.appBinds = next.binds;
     if (next.changed) this._notifyStateChange();
     return {
@@ -596,6 +608,7 @@ class DeviceTransport {
     }
     this.deviceInfo = null;
     this.responseListeners.clear();
+    this._pendingExpectedRequest = null;
     this.needsReconnect = false;
     this.statusError = null;
     if (!this._firmwareExclusive) {
@@ -776,7 +789,9 @@ class DeviceTransport {
         startGen,
         ownerToken
       );
-      if (!result || !result.success || !result.data || result.data.length !== 56) {
+      const echoed = result && result.checksumEchoed === true;
+      const shortOk = result && result.data && result.data.length === 38;
+      if (!result || !result.success || !result.data || (result.data.length !== 56 && !shortOk)) {
         return { success: false, error: (result && result.error) || 'Complete firmware-info read failed' };
       }
       if (!this.device || this.generation !== startGen || this.resetEpoch !== startEpoch || this.needsReconnect) {
@@ -793,7 +808,13 @@ class DeviceTransport {
           return { success: false, error: 'Firmware-info read is not bound to the reviewed normal identity', stale: true };
         }
       }
-      return { success: true, info, raw: Buffer.from(result.data), identity };
+      return {
+        success: true,
+        info,
+        raw: Buffer.from(result.data),
+        identity: echoed ? null : identity,
+        checksumEchoed: echoed
+      };
     }, { ownerToken });
   }
 
@@ -836,7 +857,7 @@ class DeviceTransport {
         return;
       }
 
-      const packet = protocol.decodePacket(buffer);
+      const packet = protocol.decodePacket(buffer, this._pendingExpectedRequest || null);
       if (!packet) return;
 
       for (const listener of this.responseListeners) {
@@ -919,6 +940,11 @@ class DeviceTransport {
     const offsetLo = offset & 0xFF;
     const offsetHi = (offset >> 8) & 0xFF;
     const expectedDescriptorChecksum = protocol.calculateChecksum([reqSize, offsetLo, offsetHi, 0]);
+    const expectedRequest = {
+      command,
+      offset,
+      expectedChecksum: expectedDescriptorChecksum
+    };
 
     return new Promise(resolve => {
       this.activeQueue = this.activeQueue.then(() => {
@@ -955,6 +981,7 @@ class DeviceTransport {
             if (timer) clearTimeout(timer);
             if (inFlightRecord) this._pendingInFlight.delete(inFlightRecord);
             this.responseListeners.delete(listener);
+            if (this._pendingExpectedRequest === expectedRequest) this._pendingExpectedRequest = null;
             stepResolve();
             resolve({ ...result, dispatched: didDispatch });
           };
@@ -982,20 +1009,7 @@ class DeviceTransport {
 
             if (!isMatch) return;
 
-            // Strict validity checks
-            let checksumValid = packet.checksumValid;
-
-            // Request-matched GET_INFO CMD 3 offset 0 exception:
-            // Query size 56 (expectedDescriptorChecksum = 0x38 = 56) expects replyChecksum 0x38
-            // Query size 38 (expectedDescriptorChecksum = 0x26 = 38) expects replyChecksum 0x26
-            if (!checksumValid && command === protocol.COMMANDS.GET_INFO && offset === 0 &&
-                packet.command === protocol.COMMANDS.GET_INFO && packet.offset === 0 && packet.size === 38) {
-              if (packet.replyChecksum === expectedDescriptorChecksum) {
-                checksumValid = true;
-              }
-            }
-
-            if (!checksumValid) {
+            if (!packet.checksumValid) {
               finish({ success: false, error: 'Packet reply checksum mismatch', checksumValid: false, packet, timeout: false });
               return;
             }
@@ -1010,10 +1024,22 @@ class DeviceTransport {
               return;
             }
 
+            // Reads must return exactly the requested size. The one verified
+            // exception is GET_INFO offset 0: hardware answers a 56-byte
+            // request with the 38-byte info payload (see fixtures/info-reply.json).
+            const isGetInfoShortReply = command === protocol.COMMANDS.GET_INFO && offset === 0
+              && packet.command === protocol.COMMANDS.GET_INFO && packet.offset === 0
+              && reqSize === 56 && packet.size === 38;
+            if (payloadData.length === 0 && packet.size !== reqSize && !isGetInfoShortReply) {
+              finish({ success: false, error: `Packet reply size mismatch: expected ${reqSize} bytes, got ${packet.size}`, packet, timeout: false });
+              return;
+            }
+
             this.isStandby = false;
-            finish({ success: true, packet, timeout: false });
+            finish({ success: true, packet, timeout: false, checksumEchoed: packet.checksumEchoed === true });
           };
 
+          this._pendingExpectedRequest = expectedRequest;
           this.responseListeners.add(listener);
 
           timer = setTimeout(() => {
@@ -1052,6 +1078,7 @@ class DeviceTransport {
     }
 
     const chunks = [];
+    let checksumEchoed = false;
     for (let i = 0; i < totalSize; i += protocol.CHUNK_SIZE) {
       if (this.generation !== targetGen || !this.device) {
         return { success: false, error: 'Device disconnected or generation changed during read', offset: offset + i };
@@ -1072,11 +1099,20 @@ class DeviceTransport {
       if (!res.success || !res.packet) {
         return { success: false, error: res.error || 'Failed to read chunk', offset: offset + i };
       }
+      if (res.checksumEchoed === true) checksumEchoed = true;
       chunks.push(res.packet.data);
     }
 
-    const combined = Buffer.concat(chunks).subarray(0, totalSize);
-    return { success: true, data: combined };
+    const combined = Buffer.concat(chunks);
+    if (combined.length !== totalSize) {
+      // Same verified GET_INFO exception as the reply matcher above.
+      const isGetInfoShortReply = command === protocol.COMMANDS.GET_INFO && offset === 0
+        && totalSize === 56 && combined.length === 38;
+      if (!isGetInfoShortReply) {
+        return { success: false, error: `Incomplete read: expected ${totalSize} bytes, assembled ${combined.length}`, offset };
+      }
+    }
+    return { success: true, data: combined, checksumEchoed };
   }
 
   /**
@@ -1171,6 +1207,7 @@ class DeviceTransport {
           const parsedInfo = protocol.parseInfo(infoRes.data);
           if (parsedInfo) {
             this.lastState.info = parsedInfo;
+            this._infoChecksumEchoed = infoRes.checksumEchoed === true;
           }
         }
 
@@ -1297,6 +1334,9 @@ class DeviceTransport {
     if (!res.success) {
       return res;
     }
+    if (!res.data || res.data.length !== protocol.USED_KEY_AREA_SIZE) {
+      return { success: false, error: `Incomplete layer read: expected ${protocol.USED_KEY_AREA_SIZE} bytes, got ${res.data ? res.data.length : 0}` };
+    }
 
     const keys = protocol.parseKeyMatrix(res.data, layer);
     this.lastState.keymaps[layer] = keys;
@@ -1316,6 +1356,9 @@ class DeviceTransport {
     if (!res.success) {
       return res;
     }
+    if (!res.data || res.data.length !== protocol.USED_KEY_AREA_SIZE) {
+      return { success: false, error: `Incomplete key color read: expected ${protocol.USED_KEY_AREA_SIZE} bytes, got ${res.data ? res.data.length : 0}` };
+    }
 
     this._rawKeyColors = res.data;
     const colors = protocol.parseKeyColors(res.data);
@@ -1334,6 +1377,9 @@ class DeviceTransport {
     const res = await this.readRange(protocol.COMMANDS.GET_MACROS, 0, protocol.SHARED_MACRO_SIZE, 1500);
     if (!res.success) {
       return res;
+    }
+    if (!res.data || res.data.length !== protocol.SHARED_MACRO_SIZE) {
+      return { success: false, error: `Incomplete macro region read: expected ${protocol.SHARED_MACRO_SIZE} bytes, got ${res.data ? res.data.length : 0}` };
     }
 
     this._rawMacroRegion = res.data;
@@ -4471,7 +4517,8 @@ class DeviceTransport {
     };
   }
 
-  _fullIdentity(infoParsed) {
+  _fullIdentity(infoParsed, options = {}) {
+    if (options && options.checksumEchoed === true) return null;
     return {
       ...this._deviceIdentity(),
       firmwareRaw: infoParsed && infoParsed.rawFirmwareVersion !== undefined
@@ -4481,6 +4528,35 @@ class DeviceTransport {
         ? infoParsed.rawRfFirmwareVersion
         : null
     };
+  }
+
+  async _readTrustedIdentity(startGen, timeoutMs = 800) {
+    let last = { success: false, error: 'GET_INFO read failed' };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      last = await this.readRange(protocol.COMMANDS.GET_INFO, 0, 56, timeoutMs, startGen);
+      if (!last.success || !last.data) {
+        return { success: false, error: last.error || 'GET_INFO read failed', checksumEchoed: last.checksumEchoed === true };
+      }
+      const parsed = protocol.parseInfo(last.data);
+      if (!parsed) return { success: false, error: 'Failed to parse device info' };
+      this.lastState.info = parsed;
+      this._infoChecksumEchoed = last.checksumEchoed === true;
+      if (last.checksumEchoed !== true) {
+        return { success: true, identity: this._fullIdentity(parsed), info: parsed };
+      }
+    }
+    return {
+      success: false,
+      error: 'GET_INFO reply checksum was echoed and cannot be trusted',
+      checksumEchoed: true,
+      info: this.lastState.info
+    };
+  }
+
+  _cachedIdentityForCompare() {
+    const full = this._fullIdentity(this.lastState.info, { checksumEchoed: this._infoChecksumEchoed === true });
+    if (full) return full;
+    return { ...this._deviceIdentity(), firmwareRaw: null, rfFirmwareRaw: null };
   }
 
   _identitiesMatch(expected, current) {
@@ -4568,14 +4644,9 @@ class DeviceTransport {
 
     try {
       return await this.runTransaction(async (startGen) => {
-        let infoParsed = this.lastState.info || null;
-        const infoRes = await this.readRange(protocol.COMMANDS.GET_INFO, 0, 56, 800, startGen);
-        if (infoRes.success && infoRes.data) {
-          const parsed = protocol.parseInfo(infoRes.data);
-          if (parsed) {
-            infoParsed = parsed;
-            this.lastState.info = parsed;
-          }
+        const trusted = await this._readTrustedIdentity(startGen);
+        if (!trusted.success || !trusted.identity) {
+          return { success: false, error: trusted.error || 'Device identity could not be verified' };
         }
 
         const baseRes = await this.readRange(protocol.COMMANDS.GET_BASE, 0, 56, 800, startGen);
@@ -4615,7 +4686,7 @@ class DeviceTransport {
           profileCount: parsedBase.profileCount,
           editingProfileIndex,
           editingDiffersFromActive: editingProfileIndex !== parsedBase.activeProfile,
-          identity: this._fullIdentity(infoParsed),
+          identity: trusted.identity,
           generation: startGen,
           resetEpoch: this.resetEpoch,
           wireScope,
@@ -4646,7 +4717,7 @@ class DeviceTransport {
     if (this.resetEpoch !== spec.expectedResetEpoch) {
       return { success: false, error: 'Reset epoch mismatch; review is stale', dispatched: false };
     }
-    if (!this._identitiesMatch(spec.expectedIdentity, this._fullIdentity(this.lastState.info))) {
+    if (!this._identitiesMatch(spec.expectedIdentity, this._cachedIdentityForCompare())) {
       return { success: false, error: 'Hardware identity mismatch; refusing stale reset', dispatched: false };
     }
 
@@ -4666,21 +4737,20 @@ class DeviceTransport {
         if (this.resetEpoch !== spec.expectedResetEpoch) {
           return { success: false, error: 'Reset epoch mismatch; review is stale', dispatched: false };
         }
-        if (!this._identitiesMatch(spec.expectedIdentity, this._fullIdentity(this.lastState.info))) {
+        if (!this._identitiesMatch(spec.expectedIdentity, this._cachedIdentityForCompare())) {
           return { success: false, error: 'Hardware identity mismatch; refusing stale reset', dispatched: false };
         }
 
-        const infoRes = await this.readRange(protocol.COMMANDS.GET_INFO, 0, 56, 800, startGen);
+        const trustedInfo = await this._readTrustedIdentity(startGen);
         if (this.resetEpoch !== spec.expectedResetEpoch) {
           return { success: false, error: 'Reset epoch mismatch; review is stale', dispatched: false };
         }
-        if (infoRes.success && infoRes.data) {
-          const parsedInfo = protocol.parseInfo(infoRes.data);
-          if (parsedInfo) {
-            this.lastState.info = parsedInfo;
-            if (!this._identitiesMatch(spec.expectedIdentity, this._fullIdentity(parsedInfo))) {
-              return { success: false, error: 'Hardware identity mismatch; refusing stale reset', dispatched: false };
-            }
+        if (trustedInfo.checksumEchoed === true) {
+          return { success: false, error: trustedInfo.error, dispatched: false };
+        }
+        if (trustedInfo.success && trustedInfo.identity) {
+          if (!this._identitiesMatch(spec.expectedIdentity, trustedInfo.identity)) {
+            return { success: false, error: 'Hardware identity mismatch; refusing stale reset', dispatched: false };
           }
         }
 
@@ -4982,18 +5052,61 @@ class DeviceTransport {
     this.lastState.profileNamesSource = source || 'hardware';
   }
 
-  _persistLocal(items, recovery) {
+  _persistLocal(items, recovery, expectedRev) {
     const ident = this._profileIdentity();
     return profileLibrary.writeDevice(this._profileLibraryFile(), this._profileDeviceKey(), items, {
       identityKind: ident.kind,
-      recovery
+      recovery,
+      expectedRev
     });
   }
 
+  // Optimistic concurrency for local-library mutations: on a conflicting
+  // write, re-read and re-apply the mutation once so a concurrent autosave
+  // is preserved instead of silently overwritten.
+  _mutateLocalLibrary(mutate) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const loaded = profileLibrary.readDevice(this._profileLibraryFile(), this._profileDeviceKey());
+      if (!loaded.ok) return { ok: false, error: loaded.error, unwritable: true };
+      let result;
+      try {
+        result = mutate(loaded);
+      } catch (err) {
+        return { ok: false, error: err.message || String(err) };
+      }
+      if (!result.valid) return { ok: false, error: result.error };
+      try {
+        this._persistLocal(result.items, loaded.recovery, loaded.rev);
+      } catch (err) {
+        if (err && err.code === 'REV_MISMATCH' && attempt === 0) continue;
+        return { ok: false, error: err.message };
+      }
+      return { ok: true, item: result.item };
+    }
+    return { ok: false, error: 'Profile library write conflicted with a concurrent save' };
+  }
+
   _saveOutgoingRecovery(loaded, outgoingItem, reason) {
-    const recovery = profileLibrary.prependRecovery(loaded.recovery || [], outgoingItem, reason);
-    this._persistLocal(loaded.items || [], recovery);
-    return recovery;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const recovery = profileLibrary.prependRecovery(loaded.recovery || [], outgoingItem, reason);
+      try {
+        this._persistLocal(loaded.items || [], recovery, loaded.rev);
+      } catch (err) {
+        if (err && err.code === 'REV_MISMATCH' && attempt === 0) {
+          const fresh = profileLibrary.readDevice(this._profileLibraryFile(), this._profileDeviceKey());
+          if (!fresh.ok) throw new Error(fresh.error || 'Profile library became unreadable');
+          loaded.items = fresh.items;
+          loaded.recovery = fresh.recovery;
+          loaded.rev = fresh.rev;
+          continue;
+        }
+        throw err;
+      }
+      loaded.recovery = recovery;
+      loaded.rev = (loaded.rev || 0) + 1;
+      return recovery;
+    }
+    throw new Error('Profile library write conflicted with a concurrent save');
   }
 
   getProfileLibrary() {
@@ -5001,24 +5114,19 @@ class DeviceTransport {
   }
 
   async createLocalProfile(name) {
-    const loaded = profileLibrary.readDevice(this._profileLibraryFile(), this._profileDeviceKey());
-    if (!loaded.ok) {
-      return { success: false, error: loaded.error, unwritable: true, profileLibrary: this._loadProfileLibrary({ error: loaded.error, unwritable: true }).snap };
-    }
     const onboardCount = (this.lastState.base && this.lastState.base.profileCount) || 0;
     const existingNames = (this.lastState.profileNames || []).map((n) => ({ name: n }));
-    const created = profileLibrary.createFromDefaults(loaded.items, name, onboardCount, existingNames);
-    if (!created.valid) {
-      return { success: false, error: created.error, profileLibrary: this._loadProfileLibrary().snap };
-    }
-    try {
-      this._persistLocal(created.items, loaded.recovery);
-    } catch (err) {
-      return { success: false, error: err.message, profileLibrary: this._loadProfileLibrary({ error: err.message, unwritable: true }).snap };
+    const result = this._mutateLocalLibrary((loaded) =>
+      profileLibrary.createFromDefaults(loaded.items, name, onboardCount, existingNames));
+    if (!result.ok) {
+      const extra = result.unwritable ? { error: result.error, unwritable: true } : {};
+      const failure = { success: false, error: result.error, profileLibrary: this._loadProfileLibrary(extra).snap };
+      if (result.unwritable) failure.unwritable = true;
+      return failure;
     }
     const snap = this._loadProfileLibrary().snap;
     this._notifyStateChange();
-    return { success: true, key: created.item.key, item: created.item, profileLibrary: snap, hardwareWrites: 0 };
+    return { success: true, key: result.item.key, item: result.item, profileLibrary: snap, hardwareWrites: 0 };
   }
 
   async copyOnboardToLocal(profileIndex, name) {
@@ -5030,25 +5138,21 @@ class DeviceTransport {
     }
     const exported = await this.exportProfile(profileIndex);
     if (!exported.success) return exported;
-    const loaded = profileLibrary.readDevice(this._profileLibraryFile(), this._profileDeviceKey());
-    if (!loaded.ok) {
-      return { success: false, error: loaded.error, unwritable: true, hardwareWrites: 0 };
-    }
     const storedArr = this.lastState.profileNamesStored || [];
     const namesArr = this.lastState.profileNames || [];
     const copyName = name || storedArr[profileIndex] || namesArr[profileIndex] || `Profile ${profileIndex + 1}`;
     const onboardCount = (this.lastState.base && this.lastState.base.profileCount) || 0;
     const existingNames = (this.lastState.profileNames || []).map((n, i) => ({ name: n, key: i === profileIndex ? 'self' : `onboard:${i}` }));
-    const copied = profileLibrary.copyOnboardToLocal(loaded.items, copyName, exported.data, { confirmShareFailed: false }, onboardCount, existingNames);
-    if (!copied.valid) return { success: false, error: copied.error, hardwareWrites: 0 };
-    try {
-      this._persistLocal(copied.items, loaded.recovery);
-    } catch (err) {
-      return { success: false, error: err.message, hardwareWrites: 0 };
+    const result = this._mutateLocalLibrary((loaded) =>
+      profileLibrary.copyOnboardToLocal(loaded.items, copyName, exported.data, { confirmShareFailed: false }, onboardCount, existingNames));
+    if (!result.ok) {
+      const failure = { success: false, error: result.error, hardwareWrites: 0 };
+      if (result.unwritable) failure.unwritable = true;
+      return failure;
     }
     const snap = this._loadProfileLibrary().snap;
     this._notifyStateChange();
-    return { success: true, key: copied.item.key, item: copied.item, profileLibrary: snap, hardwareWrites: 0 };
+    return { success: true, key: result.item.key, item: result.item, profileLibrary: snap, hardwareWrites: 0 };
   }
 
   async renameProfile(spec = {}) {
@@ -5078,29 +5182,24 @@ class DeviceTransport {
         return res.success ? { ...res, profileLibrary: this.lastState.profileLibrary } : res;
       });
     }
-    const loaded = profileLibrary.readDevice(this._profileLibraryFile(), this._profileDeviceKey());
-    if (!loaded.ok) return { success: false, error: loaded.error, unwritable: true };
-    const renamed = profileLibrary.renameItem(loaded.items, key, name, this.lastState.profileNames);
-    if (!renamed.valid) return { success: false, error: renamed.error };
-    try {
-      this._persistLocal(renamed.items, loaded.recovery);
-    } catch (err) {
-      return { success: false, error: err.message };
+    const result = this._mutateLocalLibrary((loaded) =>
+      profileLibrary.renameItem(loaded.items, key, name, this.lastState.profileNames));
+    if (!result.ok) {
+      const failure = { success: false, error: result.error };
+      if (result.unwritable) failure.unwritable = true;
+      return failure;
     }
     const snap = this._loadProfileLibrary().snap;
     this._notifyStateChange();
-    return { success: true, item: renamed.item, profileLibrary: snap, hardwareWrites: 0 };
+    return { success: true, item: result.item, profileLibrary: snap, hardwareWrites: 0 };
   }
 
   async deleteLocalProfile(key) {
-    const loaded = profileLibrary.readDevice(this._profileLibraryFile(), this._profileDeviceKey());
-    if (!loaded.ok) return { success: false, error: loaded.error, unwritable: true };
-    const removed = profileLibrary.deleteItem(loaded.items, key);
-    if (!removed.valid) return { success: false, error: removed.error };
-    try {
-      this._persistLocal(removed.items, loaded.recovery);
-    } catch (err) {
-      return { success: false, error: err.message };
+    const result = this._mutateLocalLibrary((loaded) => profileLibrary.deleteItem(loaded.items, key));
+    if (!result.ok) {
+      const failure = { success: false, error: result.error };
+      if (result.unwritable) failure.unwritable = true;
+      return failure;
     }
     const snap = this._loadProfileLibrary().snap;
     this._notifyStateChange();
@@ -5108,13 +5207,11 @@ class DeviceTransport {
   }
 
   async reorderLocalProfiles(orderedKeys) {
-    const loaded = profileLibrary.readDevice(this._profileLibraryFile(), this._profileDeviceKey());
-    if (!loaded.ok) return { success: false, error: loaded.error, unwritable: true };
-    const reordered = profileLibrary.reorderItems(loaded.items, orderedKeys);
-    try {
-      this._persistLocal(reordered.items, loaded.recovery);
-    } catch (err) {
-      return { success: false, error: err.message };
+    const result = this._mutateLocalLibrary((loaded) => profileLibrary.reorderItems(loaded.items, orderedKeys));
+    if (!result.ok) {
+      const failure = { success: false, error: result.error };
+      if (result.unwritable) failure.unwritable = true;
+      return failure;
     }
     const snap = this._loadProfileLibrary().snap;
     this._notifyStateChange();
@@ -5122,18 +5219,15 @@ class DeviceTransport {
   }
 
   async saveLocalProfileDraft(key, data) {
-    const loaded = profileLibrary.readDevice(this._profileLibraryFile(), this._profileDeviceKey());
-    if (!loaded.ok) return { success: false, error: loaded.error, unwritable: true };
-    const updated = profileLibrary.updateItemData(loaded.items, key, data);
-    if (!updated.valid) return { success: false, error: updated.error };
-    try {
-      this._persistLocal(updated.items, loaded.recovery);
-    } catch (err) {
-      return { success: false, error: err.message };
+    const result = this._mutateLocalLibrary((loaded) => profileLibrary.updateItemData(loaded.items, key, data));
+    if (!result.ok) {
+      const failure = { success: false, error: result.error };
+      if (result.unwritable) failure.unwritable = true;
+      return failure;
     }
     const snap = this._loadProfileLibrary().snap;
     this._notifyStateChange();
-    return { success: true, item: updated.item, profileLibrary: snap, hardwareWrites: 0 };
+    return { success: true, item: result.item, profileLibrary: snap, hardwareWrites: 0 };
   }
 
   loadLocalProfilePreview(key) {
@@ -5150,27 +5244,25 @@ class DeviceTransport {
   async importOfficialProfile(raw) {
     const inspected = profileFile.inspectOfficialEnvelope(raw);
     if (!inspected.valid) return { success: false, error: inspected.error, hardwareWrites: 0 };
-    const loaded = profileLibrary.readDevice(this._profileLibraryFile(), this._profileDeviceKey());
-    if (!loaded.ok) return { success: false, error: loaded.error, unwritable: true, hardwareWrites: 0 };
     const onboardCount = (this.lastState.base && this.lastState.base.profileCount) || 0;
     const existingNames = (this.lastState.profileNames || []).map((n) => ({ name: n }));
-    const created = profileLibrary.copyOnboardToLocal(
-      loaded.items,
-      inspected.name,
-      inspected.native,
-      inspected.extra,
-      onboardCount,
-      existingNames
-    );
-    if (!created.valid) return { success: false, error: created.error, hardwareWrites: 0 };
-    try {
-      this._persistLocal(created.items, loaded.recovery);
-    } catch (err) {
-      return { success: false, error: err.message, hardwareWrites: 0 };
+    const result = this._mutateLocalLibrary((loaded) =>
+      profileLibrary.copyOnboardToLocal(
+        loaded.items,
+        inspected.name,
+        inspected.native,
+        inspected.extra,
+        onboardCount,
+        existingNames
+      ));
+    if (!result.ok) {
+      const failure = { success: false, error: result.error, hardwareWrites: 0 };
+      if (result.unwritable) failure.unwritable = true;
+      return failure;
     }
     const snap = this._loadProfileLibrary().snap;
     this._notifyStateChange();
-    return { success: true, key: created.item.key, item: created.item, profileLibrary: snap, hardwareWrites: 0 };
+    return { success: true, key: result.item.key, item: result.item, profileLibrary: snap, hardwareWrites: 0 };
   }
 
   async exportOfficialProfile(spec = {}) {
@@ -5294,6 +5386,9 @@ class DeviceTransport {
     if (!loaded.ok) {
       return { success: false, error: loaded.error, unwritable: true };
     }
+    // The plan's local-list delta is computed against this baseline; a
+    // concurrent save must never be classified as plan-removed.
+    const planBasisItems = loaded.items || [];
 
     if (plan.preserveOutgoing && plan.outgoingLocalKey) {
       const outgoingItem = plan.list.find((item) => item.key === plan.outgoingLocalKey);
@@ -5345,17 +5440,54 @@ class DeviceTransport {
       completedSections.push('profile');
     }
 
-    const localItems = plan.list.filter((item) => item.type === profileLibrary.LOCAL_TYPE).map((item) => {
+    const plannedLocal = plan.list.filter((item) => item.type === profileLibrary.LOCAL_TYPE).map((item) => {
       const copy = { ...item };
       delete copy.needsHardwareRead;
       return copy;
     });
-    try {
-      this._persistLocal(localItems, loaded.recovery);
-    } catch (err) {
+    const persistBasis = (basis) => {
+      if (basis === loaded && loaded.items === planBasisItems) {
+        return { items: plannedLocal, recovery: basis.recovery, rev: basis.rev };
+      }
+      // Re-apply only this plan's membership delta onto a list that moved
+      // after the plan was computed (recovery retry or persist conflict).
+      const plannedKeys = new Set(plannedLocal.map((item) => item.key));
+      const originalKeys = new Set(planBasisItems.map((item) => item.key));
+      const removedKeys = new Set([...originalKeys].filter((key) => !plannedKeys.has(key)));
+      const addedItems = plannedLocal.filter((item) => !originalKeys.has(item.key));
+      const merged = (basis.items || []).filter((item) => !removedKeys.has(item.key));
+      for (const item of addedItems) {
+        if (!merged.some((row) => row.key === item.key)) merged.push(item);
+      }
+      return { items: merged, recovery: basis.recovery, rev: basis.rev };
+    };
+    let persisted = false;
+    let persistErr = null;
+    for (let attempt = 0; attempt < 2 && !persisted; attempt++) {
+      const basis = attempt === 0
+        ? loaded
+        : profileLibrary.readDevice(this._profileLibraryFile(), this._profileDeviceKey());
+      if (!basis.ok) {
+        persistErr = new Error(basis.error || 'Profile library became unreadable');
+        break;
+      }
+      const write = persistBasis(basis);
+      const cap = profileLibrary.checkCapacity(plan.keyboard.length, write.items.length, 0);
+      if (!cap.valid) {
+        return { success: false, error: cap.error, completedSections, hardwareRollback: false };
+      }
+      try {
+        this._persistLocal(write.items, write.recovery, write.rev);
+        persisted = true;
+      } catch (err) {
+        if (err && err.code === 'REV_MISMATCH' && attempt === 0) continue;
+        persistErr = err;
+      }
+    }
+    if (!persisted) {
       return {
         success: false,
-        error: `Could not persist the local profile list: ${err.message}`,
+        error: `Could not persist the local profile list: ${persistErr ? persistErr.message : 'write conflicted with a concurrent save'}`,
         completedSections,
         hardwareRollback: false
       };

@@ -5,6 +5,10 @@ const firmware = require('./firmware-protocol.cjs');
 const DEFAULT_TIMEOUTS = Object.freeze({
   dispatchMs: 5000,
   flagMs: 5000,
+  // Chip erase takes far longer than a 32-byte write; the SDK's generic 5s
+  // figure is not evidence of device completion. 30s is unverified on this
+  // hardware and only bounds the wait — expiry stays uncertain, never retried.
+  eraseFlagMs: 30000,
   identityMs: 10000
 });
 
@@ -65,6 +69,49 @@ function hasDataSubscription(io) {
   return Boolean(io && (typeof io.onData === 'function' || typeof io.on === 'function'));
 }
 
+function readDataSequence(io) {
+  if (!io) return null;
+  const value = typeof io.dataSequence === 'function' ? io.dataSequence() : io.dataSequence;
+  return Number.isInteger(value) ? value : null;
+}
+
+/**
+ * Recovery preflight: the persisted anchor replaces the normal-mode identity
+ * proof for a device an interrupted update left in bootloader mode. The
+ * anchor must target this exact package target, carry a stable USB location,
+ * and — unless explicitly overridden — match the package it was written for.
+ */
+function isPackageSha256(value) {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+}
+
+function validateResumeAnchor(anchor, packageInfo, allowDifferentPackage) {
+  if (!anchor || typeof anchor !== 'object') {
+    return { reason: 'invalid-anchor', message: 'Boot-mode recovery requires a persisted pre-flight anchor' };
+  }
+  if (anchor.targetKey !== packageInfo.targetKey) {
+    return { reason: 'invalid-anchor', message: 'Boot recovery anchor target does not match the firmware package target' };
+  }
+  if (!Number.isInteger(anchor.locationId) || anchor.locationId < 0) {
+    return { reason: 'invalid-anchor', message: 'Boot recovery anchor lacks a stable USB location' };
+  }
+  if (allowDifferentPackage !== true) {
+    if (!isPackageSha256(anchor.packageSha256)) {
+      return {
+        reason: 'invalid-anchor',
+        message: 'Boot recovery anchor package SHA-256 is missing or malformed'
+      };
+    }
+    if (anchor.packageSha256 !== packageInfo.sha256) {
+      return {
+        reason: 'package-mismatch',
+        message: 'Firmware package does not match the interrupted update; pass allowDifferentPackage to reflash anyway'
+      };
+    }
+  }
+  return null;
+}
+
 function subscribeDisconnect(io, handler) {
   if (!io) return () => {};
   if (typeof io.onDisconnect === 'function') return asUnsubscribe(io.onDisconnect(handler));
@@ -97,7 +144,9 @@ function normalizeIdentityCandidates(value) {
 function mergeTimeouts(overrides = {}) {
   const result = { ...DEFAULT_TIMEOUTS };
   for (const key of Object.keys(DEFAULT_TIMEOUTS)) {
-    if (Number.isFinite(overrides[key]) && overrides[key] >= 0) result[key] = overrides[key];
+    // A zero timeout would win every race unconditionally, marking each
+    // dispatched destructive request uncertain; only positive budgets merge.
+    if (Number.isFinite(overrides[key]) && overrides[key] > 0) result[key] = overrides[key];
   }
   return result;
 }
@@ -115,6 +164,15 @@ function mergeTimeouts(overrides = {}) {
  * `waitForIdentity` is required for the boot and normal reconnect proofs. The
  * coordinator never treats a timer as a transition proof, never retries a raw
  * destructive command, and never sends a later packet after a failure.
+ *
+ * Boot-mode recovery: run({ resumeFromBoot: true, bootAnchor }) skips the
+ * enter-boot and boot-confirmation phases for a device an interrupted update
+ * left in bootloader mode, resuming at erase. The anchor is the persisted
+ * pre-flight proof ({ targetKey, locationId, serialNumber, packageSha256 });
+ * recovery still requires a unique boot candidate bound to it and refuses
+ * ambiguity. In the normal flow, the onBootAnchor callback is invoked with
+ * that anchor data immediately before enter-boot is dispatched, and a
+ * persistence failure aborts the run pre-mutation (dispatched: 'no').
  */
 class FirmwareTransferCoordinator {
   constructor(options = {}) {
@@ -123,6 +181,7 @@ class FirmwareTransferCoordinator {
     this.packageBytes = options.packageBytes ?? options.firmware ?? null;
     this.normalIdentity = options.normalIdentity || null;
     this.waitForIdentity = options.waitForIdentity || null;
+    this.onBootAnchor = typeof options.onBootAnchor === 'function' ? options.onBootAnchor : null;
     this.catalog = options.catalog || firmware.OFFICIAL_CATALOG;
     this.timeouts = mergeTimeouts(options.timeouts);
     this.onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
@@ -148,7 +207,11 @@ class FirmwareTransferCoordinator {
     this.requests = [];
     this._transitionMode = null;
     this._transitionDetachObserved = false;
+    this._transitionEvidence = {};
     this._mutationStarted = false;
+    this._resumedFromBoot = false;
+    this.bootAnchor = null;
+    this._allowDifferentPackage = false;
   }
 
   cancel(reason = 'Firmware update cancelled by user') {
@@ -276,7 +339,7 @@ class FirmwareTransferCoordinator {
         phase: 'preflight', reason: 'identity-unavailable', uncertain: false, dispatched: false, dispatchStatus: 'no'
       });
     }
-    if (!this.normalIdentity && typeof this.io.getIdentity !== 'function') {
+    if (!this._resumedFromBoot && !this.normalIdentity && typeof this.io.getIdentity !== 'function') {
       throw new TransferFailure('Current normal identity adapter is unavailable', {
         phase: 'preflight', reason: 'identity-unavailable', uncertain: false, dispatched: false, dispatchStatus: 'no'
       });
@@ -466,19 +529,35 @@ class FirmwareTransferCoordinator {
 
   async _requestFlag(packet, meta) {
     this._ensureActive(meta.phase);
+    const flagBudgetMs = meta.kind === 'erase' ? this.timeouts.eraseFlagMs : this.timeouts.flagMs;
+    // Boot flags are untagged, so only reports stamped after this request's
+    // own write may satisfy it; anything older is a stale/duplicate flag.
+    const preDispatchSequence = readDataSequence(this.io);
     let responseResolve;
     const responsePromise = new Promise(resolve => { responseResolve = resolve; });
-    const unsubscribeData = subscribeData(this.io, raw => {
-      let decoded;
-      try { decoded = firmware.decodeFlagResponse(raw); } catch { return; }
-      if (decoded && decoded.matched) responseResolve(decoded);
-    });
     let timeoutId = null;
     const timeoutPromise = new Promise(resolve => {
-      timeoutId = setTimeout(() => resolve({ kind: 'timeout' }), this.timeouts.flagMs);
+      timeoutId = setTimeout(() => resolve({ kind: 'timeout' }), flagBudgetMs);
     });
+    let unsubscribeData = () => {};
     try {
       await this._dispatch(packet, meta);
+      const accept = raw => {
+        let decoded;
+        try { decoded = firmware.decodeFlagResponse(raw); } catch { return; }
+        if (decoded && decoded.matched) responseResolve(decoded);
+      };
+      // Subscribe before drain so a flag stamped in that gap is not dropped.
+      // The sequence filter ignores pre-write reports; accept() is idempotent.
+      unsubscribeData = subscribeData(this.io, (raw, reportMeta) => {
+        if (preDispatchSequence !== null
+          && reportMeta && Number.isInteger(reportMeta.sequence)
+          && reportMeta.sequence <= preDispatchSequence) return;
+        accept(raw);
+      });
+      if (preDispatchSequence !== null && typeof this.io.drainDataSince === 'function') {
+        for (const item of this.io.drainDataSince(preDispatchSequence)) accept(item.data);
+      }
       const outcome = await Promise.race([responsePromise, timeoutPromise, this._controlPromise()]);
       if (outcome && outcome.kind === 'timeout') {
         throw new TransferFailure(`No bootloader flag response for ${meta.kind}`, {
@@ -535,6 +614,19 @@ class FirmwareTransferCoordinator {
     }
   }
 
+  _identityWaitDispatch() {
+    if (this._mutationStarted) {
+      return { uncertain: true, dispatched: null, dispatchStatus: 'unknown' };
+    }
+    // Resume never dispatched enter-boot in this run. A boot-candidate
+    // miss is therefore known non-dispatch, not the post-enter-boot
+    // uncertain state the normal flow reports.
+    if (this._resumedFromBoot) {
+      return { uncertain: false, dispatched: false, dispatchStatus: 'no' };
+    }
+    return { uncertain: true, dispatched: true, dispatchStatus: 'yes' };
+  }
+
   async _waitForIdentity(phase, expected, anchor) {
     const allowDisconnected = this._transitionMode === 'boot' || this._transitionMode === 'normal';
     this._ensureActive(phase, { allowDisconnected });
@@ -568,10 +660,8 @@ class FirmwareTransferCoordinator {
       throw new TransferFailure(err && err.message ? err.message : `Failed waiting for ${phase} identity confirmation`, {
         phase,
         reason: 'identity-error',
-        uncertain: true,
-        dispatched: this._mutationStarted ? null : true,
-        dispatchStatus: this._mutationStarted ? 'unknown' : 'yes',
-        cause: err
+        cause: err,
+        ...this._identityWaitDispatch()
       });
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
@@ -584,9 +674,7 @@ class FirmwareTransferCoordinator {
         {
           phase,
           reason: result.kind,
-          uncertain: true,
-          dispatched: this._mutationStarted ? null : true,
-          dispatchStatus: this._mutationStarted ? 'unknown' : 'yes'
+          ...this._identityWaitDispatch()
         }
       );
     }
@@ -599,11 +687,9 @@ class FirmwareTransferCoordinator {
           : `Ambiguous ${phase} identity: ${candidates.length} candidates match`,
         {
           phase,
-          reason: 'ambiguous-identity',
-          uncertain: true,
-          dispatched: this._mutationStarted ? null : true,
-          dispatchStatus: this._mutationStarted ? 'unknown' : 'yes',
-          candidateCount: candidates.length
+          reason: candidates.length === 0 ? 'no-candidate' : 'ambiguous-identity',
+          candidateCount: candidates.length,
+          ...this._identityWaitDispatch()
         }
       );
     }
@@ -615,25 +701,30 @@ class FirmwareTransferCoordinator {
       throw new TransferFailure(`Discovered ${phase} identity is not the exact expected G75 V2 interface`, {
         phase,
         reason: 'ambiguous-identity',
-        uncertain: true,
-        dispatched: this._mutationStarted ? null : true,
-        dispatchStatus: this._mutationStarted ? 'unknown' : 'yes'
+        ...this._identityWaitDispatch()
       });
     }
-    if (anchor && !firmware.sameDeviceIdentity(anchor, identity)) {
-      throw new TransferFailure(`Discovered ${phase} interface cannot be bound to the same physical device`, {
+    if (anchor) {
+      // Boot descriptors may omit the serial string, so transition binding
+      // requires serial equality only when both sides expose one; the stable
+      // USB location is mandatory either way. The weaker evidence is recorded
+      // so the app layer can surface a location-only binding.
+      const evidence = firmware.transitionIdentityEvidence(anchor, identity);
+      if (!evidence.match) {
+        throw new TransferFailure(`Discovered ${phase} interface cannot be bound to the same physical device`, {
           phase,
           reason: 'ambiguous-identity',
-          uncertain: true,
-          dispatched: this._mutationStarted ? null : true,
-          dispatchStatus: this._mutationStarted ? 'unknown' : 'yes'
+          ...this._identityWaitDispatch()
         });
+      }
+      this._transitionEvidence[phase] = evidence.serialEvidence;
     }
     return identity;
   }
 
   _resultBase() {
     return {
+      resumedFromBoot: this._resumedFromBoot === true,
       targetKey: this.packageInfo && this.packageInfo.targetKey,
       targetId: this.packageInfo && this.packageInfo.targetId,
       targetVersion: this.packageInfo && this.packageInfo.version,
@@ -718,7 +809,12 @@ class FirmwareTransferCoordinator {
     this.returnedNormalIdentity = null;
     this._transitionMode = null;
     this._transitionDetachObserved = false;
+    this._transitionEvidence = {};
     this._mutationStarted = false;
+    this._resumedFromBoot = options.resumeFromBoot === true;
+    this.bootAnchor = options.bootAnchor || null;
+    this._allowDifferentPackage = options.allowDifferentPackage === true;
+    if (typeof options.onBootAnchor === 'function') this.onBootAnchor = options.onBootAnchor;
 
     const targetRef = options.target ?? this.targetRef;
     const packageBytes = options.packageBytes ?? options.firmware ?? this.packageBytes;
@@ -769,39 +865,97 @@ class FirmwareTransferCoordinator {
         });
       }
       this._preflightHooks();
-      if (!this.normalIdentity && typeof this.io.getIdentity === 'function') {
-        this.normalIdentity = await this._readInitialIdentity();
+      if (this._resumedFromBoot) {
+        const anchorError = validateResumeAnchor(this.bootAnchor, this.packageInfo, this._allowDifferentPackage);
+        if (anchorError) {
+          throw new TransferFailure(anchorError.message, {
+            phase: 'preflight',
+            reason: anchorError.reason,
+            uncertain: false,
+            dispatched: false,
+            dispatchStatus: 'no'
+          });
+        }
+      } else {
+        if (!this.normalIdentity && typeof this.io.getIdentity === 'function') {
+          this.normalIdentity = await this._readInitialIdentity();
+        }
+        if (!firmware.matchesNormalIdentity(this.normalIdentity, this.target, catalog)) {
+          throw new TransferFailure('Current device is not the exact normal G75 V2 target for this package', {
+            phase: 'preflight', reason: 'unsupported-target', uncertain: false, dispatched: false
+          });
+        }
+        if (!firmware.hasStableUsbLocation(this.normalIdentity)) {
+          throw new TransferFailure('Current device has no valid stable USB location for same-device proof', {
+            phase: 'preflight',
+            reason: 'ambiguous-identity',
+            uncertain: false,
+            dispatched: false,
+            dispatchStatus: 'no'
+          });
+        }
       }
-      if (!firmware.matchesNormalIdentity(this.normalIdentity, this.target, catalog)) {
-        throw new TransferFailure('Current device is not the exact normal G75 V2 target for this package', {
-          phase: 'preflight', reason: 'unsupported-target', uncertain: false, dispatched: false
-        });
-      }
-      if (!firmware.hasStableUsbLocation(this.normalIdentity)) {
-        throw new TransferFailure('Current device has no valid stable USB location for same-device proof', {
-          phase: 'preflight',
-          reason: 'ambiguous-identity',
-          uncertain: false,
-          dispatched: false,
-          dispatchStatus: 'no'
-        });
-      }
-      this._ensureActive('preflight');
+      // In recovery the device sits in bootloader mode, so no HID handle is
+      // connected until the boot-confirmation wait reopens one.
+      this._ensureActive('preflight', { allowDisconnected: this._resumedFromBoot });
 
-      this._emitProgress('enter-boot', { message: 'Requesting bootloader transition' });
-      this._transitionMode = 'boot';
-      this._transitionDetachObserved = false;
-      await this._dispatch(firmware.buildEnterBootPacket(), {
-        phase: 'enter-boot',
-        kind: 'enter-boot',
-        opcode: firmware.OPCODES.ENTER_BOOT,
-        length: firmware.ENTER_BOOT_PAYLOAD.length
-      });
+      let bootDetachObserved = false;
+      if (this._resumedFromBoot) {
+        // enter-boot is NOT re-dispatched: the interrupted update already put
+        // the device in bootloader mode. Re-prove a unique boot candidate
+        // bound to the persisted anchor, then resume at erase.
+        this._emitProgress('boot-confirmation', { message: 'Confirming the interrupted bootloader against the persisted anchor' });
+        this._transitionMode = 'boot';
+        this._transitionDetachObserved = false;
+        this.bootIdentity = await this._waitForIdentity('boot-confirmation', this.target.boot, this.bootAnchor);
+        this._transitionMode = null;
+      } else {
+        this._emitProgress('enter-boot', { message: 'Requesting bootloader transition' });
+        this._transitionMode = 'boot';
+        this._transitionDetachObserved = false;
+        if (typeof this.onBootAnchor !== 'function') {
+          throw new TransferFailure('Boot recovery anchor hook is required before entering boot mode', {
+            phase: 'enter-boot',
+            reason: 'anchor-required',
+            uncertain: false,
+            dispatched: false,
+            dispatchStatus: 'no'
+          });
+        }
+        // The recovery anchor must exist from the moment enter-boot is
+        // dispatched, so it is persisted just before the write. If it
+        // cannot be persisted the run aborts pre-mutation instead of
+        // risking an unrecoverable bootloader.
+        const anchorData = {
+          targetKey: this.packageInfo.targetKey,
+          locationId: firmware.stableUsbLocation(this.normalIdentity),
+          serialNumber: this.normalIdentity.serialNumber || null,
+          packageSha256: this.packageInfo.sha256
+        };
+        try {
+          await this.onBootAnchor(anchorData);
+        } catch (anchorErr) {
+          throw new TransferFailure('Boot recovery anchor could not be persisted; refusing to enter boot mode', {
+            phase: 'enter-boot',
+            reason: 'anchor-persistence-failed',
+            uncertain: false,
+            dispatched: false,
+            dispatchStatus: 'no',
+            cause: anchorErr
+          });
+        }
+        await this._dispatch(firmware.buildEnterBootPacket(), {
+          phase: 'enter-boot',
+          kind: 'enter-boot',
+          opcode: firmware.OPCODES.ENTER_BOOT,
+          length: firmware.ENTER_BOOT_PAYLOAD.length
+        });
 
-      this._emitProgress('boot-confirmation', { message: 'Confirming the exact bootloader identity' });
-      this.bootIdentity = await this._waitForIdentity('boot-confirmation', this.target.boot, this.normalIdentity);
-      const bootDetachObserved = this._transitionDetachObserved;
-      this._transitionMode = null;
+        this._emitProgress('boot-confirmation', { message: 'Confirming the exact bootloader identity' });
+        this.bootIdentity = await this._waitForIdentity('boot-confirmation', this.target.boot, this.normalIdentity);
+        bootDetachObserved = this._transitionDetachObserved;
+        this._transitionMode = null;
+      }
 
       this._emitProgress('erase', { message: 'Erasing the bootloader target' });
       await this._requestFlag(
@@ -896,7 +1050,13 @@ class FirmwareTransferCoordinator {
       this.returnedNormalIdentity = await this._waitForIdentity('normal-reconnect', this.target.normal, this.bootIdentity);
       const normalDetachObserved = this._transitionDetachObserved;
       this._transitionMode = null;
-      if (!firmware.sameDeviceIdentity(this.normalIdentity, this.returnedNormalIdentity)) {
+      // In recovery there is no pre-flight normal identity; the returned
+      // normal interface binds to the persisted anchor instead. Serial
+      // equality is still enforced whenever both sides expose a serial.
+      const finalBindingOk = this._resumedFromBoot
+        ? firmware.sameTransitionIdentity(this.bootAnchor, this.returnedNormalIdentity)
+        : firmware.sameDeviceIdentity(this.normalIdentity, this.returnedNormalIdentity);
+      if (!finalBindingOk) {
         throw new TransferFailure('Returned normal interface is not bound to the reviewed device', {
           phase: 'normal-reconnect',
           reason: 'ambiguous-identity',
@@ -926,7 +1086,9 @@ class FirmwareTransferCoordinator {
           bootDetachObserved,
           bootIdentityConfirmed: true,
           normalDetachObserved,
-          normalIdentityConfirmed: true
+          normalIdentityConfirmed: true,
+          bootSerialEvidence: this._transitionEvidence['boot-confirmation'] || null,
+          normalSerialEvidence: this._transitionEvidence['normal-reconnect'] || null
         },
         ...this._resultBase()
       };

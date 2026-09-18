@@ -28,7 +28,8 @@ class NativeFirmwareError extends Error {
 function mergeTimeouts(overrides = {}) {
   const result = { ...DEFAULT_NATIVE_TIMEOUTS };
   for (const key of Object.keys(DEFAULT_NATIVE_TIMEOUTS)) {
-    if (Number.isFinite(overrides[key]) && overrides[key] >= 0) result[key] = overrides[key];
+    // Zero is not a valid budget: it would fire before any work could settle.
+    if (Number.isFinite(overrides[key]) && overrides[key] > 0) result[key] = overrides[key];
   }
   return result;
 }
@@ -332,6 +333,13 @@ function candidateMatchesAnchor(candidate, anchor) {
   return Boolean(candidate && firmware.sameDeviceIdentity(anchor, candidate.identity));
 }
 
+// Boot/normal transition binding: a boot descriptor may legitimately lack a
+// serial string, so serial equality is only required when both sides have
+// one; the stable USB location remains mandatory either way.
+function candidateMatchesTransitionAnchor(candidate, anchor) {
+  return Boolean(candidate && firmware.sameTransitionIdentity(anchor, candidate.identity));
+}
+
 function appendOutput(chunks, currentLength, chunk, maxOutputBytes) {
   const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
   const nextLength = currentLength + buffer.length;
@@ -501,6 +509,12 @@ class NativeFirmwareIo {
     this._dataBound = false;
     this._dataListeners = new Set();
     this._disconnectListeners = new Set();
+    // Every inbound report is stamped with a monotonically increasing
+    // sequence, even while no listener is registered. Boot flag replies are
+    // untagged, so a request must be able to reject reports stamped before
+    // its own write and drain only newer ones.
+    this._dataSequence = 0;
+    this._recentData = [];
   }
 
   _hidModule() {
@@ -632,18 +646,36 @@ class NativeFirmwareIo {
   }
 
   _bindDataIfNeeded() {
-    if (!this._handle || this._dataBound || this._dataListeners.size === 0) return;
+    if (!this._handle || this._dataBound) return;
     if (typeof this._handle.on !== 'function') return;
     const handle = this._handle;
     const generation = this._handleGeneration;
     this._handleDataHandler = data => {
       if (!this._handleIsCurrent(handle, generation)) return;
+      this._dataSequence += 1;
+      const stamp = this._dataSequence;
+      this._recentData.push({ sequence: stamp, data });
+      if (this._recentData.length > 8) this._recentData.shift();
       for (const listener of this._dataListeners) {
-        try { listener(data); } catch {}
+        try { listener(data, { sequence: stamp }); } catch {}
       }
     };
     handle.on('data', this._handleDataHandler);
     this._dataBound = true;
+  }
+
+  get dataSequence() {
+    return this._dataSequence;
+  }
+
+  // Reports buffered while no listener was registered, limited to those
+  // stamped after `sequence`. A caller snapshots dataSequence before its
+  // write; anything older can never be that write's reply.
+  drainDataSince(sequence) {
+    if (!Number.isInteger(sequence)) return [];
+    return this._recentData
+      .filter(item => item.sequence > sequence)
+      .map(item => ({ sequence: item.sequence, data: item.data }));
   }
 
   _bindHandle(handle, identity) {
@@ -673,6 +705,9 @@ class NativeFirmwareIo {
     this._handleIdentity = null;
     this._handleGeneration += 1;
     this._unbindHandle(handle);
+    // Reports from a retired handle are never evidence for the next handle's
+    // requests; the sequence itself keeps increasing across handles.
+    this._recentData = [];
     await closeHandle(handle);
   }
 
@@ -691,13 +726,10 @@ class NativeFirmwareIo {
     if (typeof listener !== 'function') return () => {};
     this._dataListeners.add(listener);
     this._bindDataIfNeeded();
+    // The handle data handler stays bound after the last listener leaves so
+    // the sequence stamp and drain buffer keep covering listener gaps.
     return () => {
       this._dataListeners.delete(listener);
-      if (this._dataListeners.size === 0 && this._handle && this._dataBound) {
-        removeEventListener(this._handle, 'data', this._handleDataHandler);
-        this._handleDataHandler = null;
-        this._dataBound = false;
-      }
     };
   }
 
@@ -741,7 +773,7 @@ class NativeFirmwareIo {
     });
   }
 
-  async _openPath(candidate, target, mode, anchor, { deadline } = {}) {
+  async _openPath(candidate, target, mode, anchor, { deadline, transition = false } = {}) {
     const hid = this._hidModule();
     if (!hid.HIDAsync || typeof hid.HIDAsync.open !== 'function') {
       throw new NativeFirmwareError('node-hid HIDAsync.open() is unavailable', { reason: 'io-error' });
@@ -832,7 +864,10 @@ class NativeFirmwareIo {
         locationId: candidate.identity.locationId,
         registryEntryId: candidate.identity.registryEntryId
       };
-      if (!firmware.sameDeviceIdentity(anchor, identity)) {
+      const bound = transition
+        ? firmware.sameTransitionIdentity(anchor, identity)
+        : firmware.sameDeviceIdentity(anchor, identity);
+      if (!bound) {
         throw new NativeFirmwareError('Opened HID handle cannot be bound to the same physical device', {
           reason: 'ambiguous-identity'
         });
@@ -899,7 +934,7 @@ class NativeFirmwareIo {
       this._assertUsable();
       if (this._now() >= deadline) throw this._timeoutError(`${phase} identity rediscovery`);
       const candidates = await this._discover(canonicalTarget, mode, { deadline });
-      const matching = candidates.filter(candidate => candidateMatchesAnchor(candidate, anchor));
+      const matching = candidates.filter(candidate => candidateMatchesTransitionAnchor(candidate, anchor));
       if (matching.length > 1) {
         throw new NativeFirmwareError(`Ambiguous ${phase} identity: ${matching.length} candidates match`, {
           reason: 'ambiguous-identity', candidateCount: matching.length
@@ -909,7 +944,7 @@ class NativeFirmwareIo {
         // The candidate was proven by fresh HID + IORegistry data before this
         // open. _openPath performs a second descriptor read and only then
         // installs the new handle's data/error listeners.
-        return this._openPath(matching[0], canonicalTarget, mode, anchor, { deadline });
+        return this._openPath(matching[0], canonicalTarget, mode, anchor, { deadline, transition: true });
       }
 
       const now = this._now();

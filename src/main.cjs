@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, Menu, dialog, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const { pathToFileURL } = require('node:url');
+const { execFile } = require('node:child_process');
 const transport = require('./transport.cjs');
 const detector = require('./detector.cjs');
 const validators = require('./schema-validators.cjs');
@@ -27,6 +29,7 @@ const advancedPlan = require('./advanced-plan.cjs');
 const { FirmwareSession } = require('./firmware-session.cjs');
 const i18n = require('./i18n.js');
 const { AppBindWatcher } = require('./profile-app-bind-watch.cjs');
+const appBind = require('./profile-app-bind.cjs');
 
 let win = null;
 let deviceWatcher = null;
@@ -95,6 +98,47 @@ function broadcastState() {
   }
 }
 
+function isFirmwareWriteInFlight() {
+  if (typeof transport.isFirmwareExclusive === 'function' && transport.isFirmwareExclusive()) {
+    return true;
+  }
+  // Resume never takes exclusive transport ownership until the device is
+  // back in normal mode, so the session operation is the only in-flight
+  // signal during bootloader erase/write.
+  return Boolean(firmwareSession && firmwareSession.isUpdateInFlight());
+}
+
+// Mid-flash the HID handle must stay open; closing it mid-write can brick the keyboard.
+function showFirmwareQuitWarning() {
+  const options = {
+    type: 'warning',
+    buttons: [i18n.t('dialog.ok', { default: 'OK' })],
+    defaultId: 0,
+    title: i18n.t('dialog.quitBlockedTitle', { default: 'Cannot quit during firmware update' }),
+    message: i18n.t('dialog.quitBlockedTitle', { default: 'Cannot quit during firmware update' }),
+    detail: i18n.t('dialog.quitBlockedBody', {
+      default: 'Quitting now closes the USB connection in the middle of a firmware write and can permanently brick the keyboard. Wait for the update to finish, then quit.'
+    })
+  };
+  if (win && !win.isDestroyed()) {
+    void dialog.showMessageBox(win, options);
+  } else {
+    void dialog.showMessageBox(options);
+  }
+}
+
+function readFrontmostApp() {
+  return new Promise((resolve) => {
+    execFile('/usr/bin/lsappinfo', ['info', '-only', 'name,bundleid', 'front'], { timeout: 800 }, (err, stdout) => {
+      if (err) {
+        resolve(null);
+        return;
+      }
+      resolve(appBind.parseLsappinfo(String(stdout || '')));
+    });
+  });
+}
+
 function createWindow() {
   win = new BrowserWindow({
     title: 'Maicong Studio',
@@ -121,21 +165,30 @@ function createWindow() {
     return { action: 'deny' };
   });
 
+  const appPageUrl = pathToFileURL(path.join(__dirname, 'index.html')).toString();
   win.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith('file:')) {
-      event.preventDefault();
+    if (url === appPageUrl) return;
+    event.preventDefault();
+    if (url.startsWith('https:') || url.startsWith('http:')) {
       void shell.openExternal(url);
     }
   });
 
   if (isDevHarness) {
-    win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
-      console.log(`[Renderer] [${level}] ${message} (${sourceId}:${line})`);
+    win.webContents.on('console-message', (details) => {
+      console.log(`[Renderer] [${details.level}] ${details.message} (${details.sourceId}:${details.lineNumber})`);
     });
     win.webContents.on('render-process-gone', (_event, details) => {
       console.error('[Renderer Gone]', details);
     });
   }
+
+  win.on('close', (event) => {
+    if (isFirmwareWriteInFlight()) {
+      event.preventDefault();
+      showFirmwareQuitWarning();
+    }
+  });
 
   win.on('closed', () => {
     win = null;
@@ -160,9 +213,13 @@ function readStoredLocale() {
 
 function writeStoredLocale(locale) {
   const next = i18n.normalizeLocale(locale);
-  fs.mkdirSync(app.getPath('userData'), { recursive: true });
-  fs.writeFileSync(localeFilePath(), JSON.stringify({ locale: next }), 'utf8');
-  return next;
+  try {
+    fs.mkdirSync(app.getPath('userData'), { recursive: true });
+    fs.writeFileSync(localeFilePath(), JSON.stringify({ locale: next }), 'utf8');
+    return { locale: next, persisted: true };
+  } catch {
+    return { locale: next, persisted: false };
+  }
 }
 
 ipcMain.handle('maicong:get-locale', () => {
@@ -171,10 +228,12 @@ ipcMain.handle('maicong:get-locale', () => {
 });
 
 ipcMain.handle('maicong:set-locale', (_event, locale) => {
-  const next = isDevHarness ? i18n.normalizeLocale(locale) : writeStoredLocale(locale);
-  i18n.setLocale(next);
+  const stored = isDevHarness
+    ? { locale: i18n.normalizeLocale(locale), persisted: false }
+    : writeStoredLocale(locale);
+  i18n.setLocale(stored.locale);
   setupAppMenu();
-  return { success: true, locale: next };
+  return { success: true, locale: stored.locale, persisted: stored.persisted };
 });
 
 ipcMain.handle('maicong:get-state', () => {
@@ -212,9 +271,23 @@ ipcMain.handle('maicong:get-layout', () => {
   };
 });
 
+function firmwareWriteInFlightError() {
+  return i18n.t('firmware.reasonBusy', { default: 'A firmware update is already in progress' });
+}
+
 ipcMain.handle('maicong:scan', async () => {
   if (mockUiTest && !app.isPackaged) {
     return { ioregDevices: [], hidDevices: [], state: getCompleteState(), mock: true };
+  }
+  if (isFirmwareWriteInFlight()) {
+    return {
+      ioregDevices: [],
+      hidDevices: typeof transport.listDevices === 'function' ? transport.listDevices() : [],
+      state: getCompleteState(),
+      blocked: true,
+      reason: 'firmware-update',
+      error: firmwareWriteInFlightError()
+    };
   }
   const ioregDevices = await detector.detectDevices();
   const hidDevices = transport.listDevices();
@@ -238,6 +311,14 @@ ipcMain.handle('maicong:scan', async () => {
 });
 
 ipcMain.handle('maicong:connect', async (_event, targetPath) => {
+  if (isFirmwareWriteInFlight()) {
+    return {
+      success: false,
+      error: firmwareWriteInFlightError(),
+      reason: 'firmware-update',
+      blocked: true
+    };
+  }
   if (targetPath && typeof targetPath !== 'string') {
     return { success: false, error: 'Invalid targetPath' };
   }
@@ -250,6 +331,14 @@ ipcMain.handle('maicong:connect', async (_event, targetPath) => {
 });
 
 ipcMain.handle('maicong:disconnect', () => {
+  if (isFirmwareWriteInFlight()) {
+    return {
+      success: false,
+      error: firmwareWriteInFlightError(),
+      reason: 'firmware-update',
+      blocked: true
+    };
+  }
   transport.disconnect();
   broadcastState();
   return { success: true };
@@ -420,19 +509,6 @@ ipcMain.handle('maicong:import-gif', async (_event, spec) => {
     }
     if (buf && buf.length > 5 * 1024 * 1024) {
       return { success: false, error: 'GIF file size exceeds 5MB limit' };
-    }
-  } else if (spec && typeof spec.filePath === 'string') {
-    try {
-      const stat = fs.statSync(spec.filePath);
-      if (stat.size > 5 * 1024 * 1024) {
-        return { success: false, error: 'GIF file size exceeds 5MB limit' };
-      }
-      buf = fs.readFileSync(spec.filePath);
-      if (!name) {
-        name = path.basename(spec.filePath, path.extname(spec.filePath));
-      }
-    } catch (err) {
-      return { success: false, error: err.message || 'Failed to read GIF file' };
     }
   } else {
     if (!win) return { success: false, error: 'No active window' };
@@ -885,7 +961,18 @@ function ensureFirmwareSession() {
       return new mockFw.MockNativeFirmwareIo({
         normalIdentity: identity,
         bootIdentity: mockFw.bootIdentityFromNormal(identity, targetKey),
-        returnedNormalIdentity: identity
+        returnedNormalIdentity: identity,
+        onFlashed() {
+          const hid = global.__maicongMockHid;
+          if (!hid || !hid.info || hid.info.length < 4) return;
+          const after = targetKey === 'keyboard'
+            ? mockFw.KEYBOARD_INFO_AFTER
+            : mockFw.RECEIVER_INFO_AFTER;
+          const raw = targetKey === 'keyboard' ? after.rawFirmwareVersion : after.rawRfFirmwareVersion;
+          const offset = targetKey === 'keyboard' ? 0 : 2;
+          hid.info[offset] = raw & 0xFF;
+          hid.info[offset + 1] = (raw >> 8) & 0xFF;
+        }
       });
     };
     options.chooseFile = async (spec = {}) => {
@@ -949,6 +1036,28 @@ ipcMain.handle('maicong:firmware-cancel', async (_event, reason) => {
 
 ipcMain.handle('maicong:firmware-dismiss-review', async () => {
   return ensureFirmwareSession().dismissReview();
+});
+
+ipcMain.handle('maicong:firmware-interrupted-status', async () => {
+  return ensureFirmwareSession().interruptedUpdateStatus();
+});
+
+ipcMain.handle('maicong:firmware-resume', async (_event, spec) => {
+  if (spec != null && (typeof spec !== 'object' || Array.isArray(spec))) {
+    return { success: false, error: 'Invalid firmware resume specification' };
+  }
+  const confirmed = Boolean(spec && (spec.confirmed === true || spec.confirm === true || spec.confirmation === true));
+  return ensureFirmwareSession().resumeInterruptedUpdate({
+    confirmed,
+    allowDifferentPackage: Boolean(spec && spec.allowDifferentPackage === true),
+    filePath: spec && typeof spec.filePath === 'string' ? spec.filePath : undefined,
+    backupPath: spec && typeof spec.backupPath === 'string' ? spec.backupPath : undefined,
+    drainTimeoutMs: spec && Number.isFinite(spec.drainTimeoutMs) ? spec.drainTimeoutMs : undefined
+  });
+});
+
+ipcMain.handle('maicong:firmware-discard-interrupted', async () => {
+  return ensureFirmwareSession().discardInterruptedUpdate();
 });
 
 ipcMain.handle('maicong:import-profile', async () => {
@@ -1076,6 +1185,10 @@ ipcMain.handle('maicong:list-app-binds', async () => {
 ipcMain.handle('maicong:bind-profile-app', async (_event, spec) => {
   if (!spec || !Number.isInteger(spec.profileIndex)) {
     return { success: false, error: 'profileIndex must be 0..3' };
+  }
+  if (spec.appPath !== undefined
+    && (typeof spec.appPath !== 'string' || !path.isAbsolute(spec.appPath) || !spec.appPath.endsWith('.app'))) {
+    return { success: false, error: 'appPath must be an absolute path to a .app bundle' };
   }
   let payload = {
     profileIndex: spec.profileIndex,
@@ -1211,8 +1324,12 @@ ipcMain.handle('maicong:export-official-profile', async (_event, spec) => {
     if (save.canceled || !save.filePath) return { success: false, canceled: true };
     filePath = save.filePath;
   }
-  fs.writeFileSync(filePath, JSON.stringify(exported.data, null, 2), 'utf8');
-  return { success: true, filePath, data: exported.data };
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(exported.data, null, 2), 'utf8');
+    return { success: true, filePath, data: exported.data };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 function setupAppMenu() {
@@ -1275,6 +1392,21 @@ function setupAppMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+// Node's default unhandled-rejection mode is throw, so rejections land here too.
+process.on('uncaughtException', (err) => {
+  console.error('[Fatal] Uncaught exception in main process:', err);
+  try {
+    // Mid-flash the HID handle must stay untouched; the OS reclaims it on exit.
+    if (!isFirmwareWriteInFlight()) transport.disconnect();
+  } catch {
+    // Cleanup must not mask the original error.
+  }
+  if (app.isReady()) {
+    dialog.showErrorBox('Maicong Studio encountered an unexpected error', String((err && err.stack) || err));
+  }
+  process.exit(1);
+});
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -1313,13 +1445,10 @@ if (!app.requestSingleInstanceLock()) {
           : null;
       },
       isConnected: () => Boolean(transport.lastState && transport.lastState.connected),
-      isBusy: () => Boolean(
-        (typeof transport.isFirmwareExclusive === 'function' && transport.isFirmwareExclusive())
-        || transport.resetInFlight
-      ),
+      isBusy: () => Boolean(isFirmwareWriteInFlight() || transport.resetInFlight),
       getFrontmost: mockUiTest && !app.isPackaged
         ? async () => global.__maicongMockFrontmost
-        : undefined,
+        : readFrontmostApp,
       switchProfile: async (idx) => {
         const res = await transport.switchProfile(idx);
         broadcastState();
@@ -1332,7 +1461,7 @@ if (!app.requestSingleInstanceLock()) {
 
     if (!isDevHarness) {
       deviceWatcher = detector.startDeviceWatcher(async () => {
-        if (typeof transport.isFirmwareExclusive === 'function' && transport.isFirmwareExclusive()) {
+        if (isFirmwareWriteInFlight()) {
           // The updater owns the normal/boot transition.  Detector callbacks
           // are not awaited by the watcher, so this gate must live here as
           // well as in transport.connect()/queryStatus().
@@ -1416,9 +1545,23 @@ if (!app.requestSingleInstanceLock()) {
         }
       })();
     }
+  }).catch((err) => {
+    console.error('[Startup] Failed to initialize Maicong Studio:', err);
+    try {
+      if (!isFirmwareWriteInFlight()) transport.disconnect();
+    } catch {
+      // Startup is already aborting; cleanup must not throw again.
+    }
+    dialog.showErrorBox('Maicong Studio failed to start', String((err && err.stack) || err));
+    app.exit(1);
   });
 
-  app.on('before-quit', () => {
+  app.on('before-quit', (event) => {
+    if (isFirmwareWriteInFlight()) {
+      event.preventDefault();
+      showFirmwareQuitWarning();
+      return;
+    }
     deviceWatcher?.stop();
     if (appBindWatcher) appBindWatcher.stop();
     transport.disconnect();

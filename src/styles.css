@@ -732,6 +732,25 @@ h3 {
   line-height: 1.5;
 }
 
+.firmware-recovery {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--accent-amber-bg);
+  border: 1px solid rgba(226, 103, 53, 0.28);
+}
+
+.firmware-recovery h3 {
+  font-size: 14px;
+  font-weight: 650;
+  margin: 0 0 6px;
+  color: var(--text-primary);
+}
+
+.firmware-recovery .card-desc {
+  margin: 0 0 12px;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

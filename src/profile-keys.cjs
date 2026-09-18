@@ -57,13 +57,27 @@ function tupleFromBytes(bytes, index) {
   };
 }
 
+const FACTORY_DEFAULTS_ERROR = 'Packaged keyboard defaults are damaged; reinstall the app';
+
 function loadFactoryLayers() {
   if (_factoryCache) return _factoryCache;
   const file = path.join(__dirname, 'data', 'default-layers.json');
-  const json = JSON.parse(fs.readFileSync(file, 'utf8'));
+  let json;
+  try {
+    json = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    throw new Error(FACTORY_DEFAULTS_ERROR);
+  }
+  if (!isPlainObject(json) || json.model !== 'MCHOSE G75 V2' || json.usedBytes !== 384 || !isPlainObject(json.layers)) {
+    throw new Error(FACTORY_DEFAULTS_ERROR);
+  }
   const layers = [];
   for (let l = 0; l < LAYER_COUNT; l++) {
     const hex = json.layers[String(l)];
+    // Buffer.from silently truncates short or odd-length hex instead of throwing
+    if (typeof hex !== 'string' || hex.length !== 768) {
+      throw new Error(FACTORY_DEFAULTS_ERROR);
+    }
     const buf = Buffer.from(hex, 'hex');
     const tuples = [];
     for (let i = 0; i < FACTORY_KEY_COUNT; i++) tuples.push(tupleFromBytes(buf, i));

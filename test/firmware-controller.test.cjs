@@ -179,6 +179,7 @@ class MockNativeFirmwareIo {
   }
 
   async close() {
+    if (this.options.closeFailure) throw new Error('mock native close failure');
     this.closed = true;
     this.connected = false;
     this.dataListeners.clear();
@@ -205,11 +206,15 @@ class MockControllerTransport {
   async readFirmwareInfo(options = {}) {
     this.calls.push({ kind: 'read-version', owner: Boolean(options.ownerToken) });
     const identity = this.reconnected ? returnedNormalIdentity : normalIdentity;
-    return {
+    const result = {
       success: true,
       identity: { ...identity },
       info: this.reconnected ? { ...afterInfo } : { ...beforeInfo }
     };
+    // Simulates a GET_INFO reply admitted only through the echoed-checksum
+    // quirk exception; the post-update gate must never trust it.
+    if (this.reconnected && this.options.echoVersionChecksum) result.checksumEchoed = true;
+    return result;
   }
 
   async acquireFirmwareOwnership(expected) {
@@ -275,6 +280,9 @@ class MockControllerTransport {
   async releaseFirmwareOwnership(ownerToken) {
     this.calls.push({ kind: 'release', owner: ownerToken === this.owner });
     if (ownerToken !== this.owner) return { success: false, error: 'owner mismatch' };
+    // Simulates a release that fails while ownership stays held, the poisoned
+    // state the controller must surface instead of reporting clean success.
+    if (this.options.releaseFailure) return { success: false, error: 'mock release failure' };
     this.owner = null;
     return { success: true, released: true };
   }
@@ -358,6 +366,68 @@ describe('exclusive native firmware update controller', () => {
     assert.equal(success.fullUpdaterSuccess, true);
   });
 
+  test('ownership release failure after a successful run is reported as failure, never clean success', async () => {
+    const { controller, transport } = makeController({ releaseFailure: true });
+    const token = await reviewFixture(controller, '/tmp/maicong-controller-release-failure.json');
+    const result = await controller.start(token, { confirmed: true });
+    assert.equal(result.success, false);
+    assert.equal(result.fullUpdaterSuccess, false);
+    assert.equal(result.failedPhase, 'handoff-release');
+    assert.equal(result.reason, 'handoff-failed');
+    assert.equal(result.ownershipReleased, false);
+    assert.ok(transport.owner, 'ownership is still held and must be surfaced, not hidden behind success');
+    assert.ok(Array.isArray(result.progress) && result.progress.length > 0);
+  });
+
+  test('a native close failure during cleanup cannot mask the original transfer failure', async () => {
+    const { controller, transport } = makeController({ rejectPhase: 'erase', closeFailure: true });
+    const token = await reviewFixture(controller, '/tmp/maicong-controller-close-failure.json');
+    const result = await controller.start(token, { confirmed: true });
+    assert.equal(result.success, false);
+    assert.equal(result.failedPhase, 'erase');
+    assert.equal(result.ownershipReleased, true);
+    assert.ok(Array.isArray(result.progress) && result.progress.length > 0);
+    assert.equal(transport.owner, null);
+  });
+
+  test('an echoed-checksum version readback is retried after restore and cannot mark the update complete', async () => {
+    const { controller, transport } = makeController({ echoVersionChecksum: true });
+    const token = await reviewFixture(controller, '/tmp/maicong-controller-echoed-version.json');
+    const result = await controller.start(token, { confirmed: true });
+    assert.equal(result.success, false);
+    assert.equal(result.failedPhase, 'version-readback');
+    assert.equal(result.reason, 'version-untrusted');
+    assert.equal(result.version.matched, false);
+    assert.equal(result.restorationVerified, true);
+    assert.equal(transport.calls.some(call => call.kind === 'restore'), true);
+    const restoreIndex = transport.calls.findIndex(call => call.kind === 'restore');
+    const firstPostRestoreRead = transport.calls.findIndex((call, index) =>
+      call.kind === 'read-version' && index > restoreIndex);
+    assert.ok(restoreIndex >= 0 && firstPostRestoreRead > restoreIndex, 'restore must run before the version predicate');
+    const postReconnectReads = transport.calls.filter((call, index) =>
+      call.kind === 'read-version' && transport.calls.findIndex(c => c.kind === 'connect-normal') < index);
+    assert.equal(postReconnectReads.length, 3, 'the echoed readback must be retried on fresh requests');
+  });
+
+  test('a catalog-matching same-version readback after a verified transfer still restores and succeeds', async () => {
+    const { controller, transport } = makeController();
+    const originalRead = transport.readFirmwareInfo.bind(transport);
+    transport.readFirmwareInfo = async options => {
+      const result = await originalRead(options);
+      result.info = { ...afterInfo };
+      return result;
+    };
+    const token = await reviewFixture(controller, '/tmp/maicong-controller-same-version.json');
+    const result = await controller.start(token, { confirmed: true });
+    assert.equal(result.success, true, result.error);
+    assert.equal(result.fullUpdaterSuccess, true);
+    assert.equal(result.version.matched, true);
+    assert.equal(result.version.beforeRaw, 100);
+    assert.equal(result.version.actual, 100);
+    assert.equal(result.restorationVerified, true);
+    assert.equal(transport.calls.some(call => call.kind === 'restore'), true);
+  });
+
   test('runs backup, one serialized native transfer, exact normal reconnect, real version gate, and verified restore', async () => {
     const { controller, transport, getNative } = makeController();
     const progress = [];
@@ -377,7 +447,7 @@ describe('exclusive native firmware update controller', () => {
     ]);
     assert.deepEqual(transport.calls.map(call => call.kind), [
       'read-version', 'read-version', 'acquire', 'backup', 'close-normal', 'connect-normal',
-      'read-version', 'restore', 'release'
+      'restore', 'read-version', 'release'
     ]);
     assert.ok(transport.calls.find(call => call.kind === 'backup').owner);
     assert.ok(transport.calls.find(call => call.kind === 'restore').owner);
@@ -387,7 +457,7 @@ describe('exclusive native firmware update controller', () => {
     assert.equal(progress.at(-1).phase, 'complete');
   });
 
-  test('keeps the persisted backup and refuses to restore when post-update version readback mismatches', async () => {
+  test('restores configuration then fails the version predicate when post-update readback mismatches the catalog', async () => {
     const { controller, transport } = makeController();
     const originalRead = transport.readFirmwareInfo.bind(transport);
     transport.readFirmwareInfo = async options => {
@@ -403,8 +473,23 @@ describe('exclusive native firmware update controller', () => {
     assert.equal(result.reason, 'version-mismatch');
     assert.equal(result.version.matched, false);
     assert.equal(result.backupRetained, true);
-    assert.equal(result.restoration, null);
-    assert.equal(transport.calls.some(call => call.kind === 'restore'), false);
+    assert.equal(result.restorationVerified, true);
+    assert.equal(transport.calls.some(call => call.kind === 'restore'), true);
+  });
+
+  test('a cleanup throw after a successful transfer still returns a structured failure', async () => {
+    const { controller, transport } = makeController();
+    const token = await reviewFixture(controller, '/tmp/maicong-controller-cleanup-throw.json');
+    controller._cleanupOperation = async () => {
+      throw new Error('cleanup exploded');
+    };
+    const result = await controller.start(token, { confirmed: true });
+    assert.equal(result.success, false);
+    assert.equal(typeof result.success, 'boolean');
+    assert.equal(result.reason, 'handoff-failed');
+    assert.equal(result.failedPhase, 'native-close');
+    assert.equal(result.restorationVerified, true);
+    assert.equal(transport.calls.some(call => call.kind === 'restore'), true);
   });
 
   test('reports partial restoration after writes without converting it into updater success', async () => {

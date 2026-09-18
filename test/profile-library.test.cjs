@@ -225,3 +225,111 @@ describe('source-traced list transitions', () => {
     assert.equal(list[idx], 'd');
   });
 });
+
+describe('optimistic concurrency rev stamping', () => {
+  test('a stale expectedRev is rejected and the concurrent write survives', () => {
+    const file = tmpFile();
+    files.push(file);
+    const first = library.createFromDefaults([], 'First', 4);
+    library.writeDevice(file, 'dev', first.items);
+
+    const actorA = library.readDevice(file, 'dev');
+    const actorB = library.readDevice(file, 'dev');
+    assert.equal(actorA.rev, actorB.rev);
+
+    const fromB = library.createFromDefaults(actorB.items, 'Second', 4);
+    library.writeDevice(file, 'dev', fromB.items, { expectedRev: actorB.rev });
+
+    const fromA = library.createFromDefaults(actorA.items, 'Third', 4);
+    assert.throws(
+      () => library.writeDevice(file, 'dev', fromA.items, { expectedRev: actorA.rev }),
+      (err) => err.code === 'REV_MISMATCH'
+    );
+
+    const after = library.readDevice(file, 'dev');
+    assert.equal(after.items.length, 2);
+    assert.ok(after.items.some((i) => i.name === 'Second'), 'concurrent save must survive');
+    assert.ok(after.items.every((i) => i.name !== 'Third'), 'stale snapshot must not land');
+
+    const retry = library.createFromDefaults(after.items, 'Third', 4);
+    library.writeDevice(file, 'dev', retry.items, { expectedRev: after.rev });
+    const final = library.readDevice(file, 'dev');
+    assert.equal(final.items.length, 3);
+    assert.ok(final.items.some((i) => i.name === 'Second'));
+    assert.ok(final.items.some((i) => i.name === 'Third'));
+  });
+
+  test('writes without expectedRev stay unconditional and bump the rev monotonically', () => {
+    const file = tmpFile();
+    files.push(file);
+    const created = library.createFromDefaults([], 'Base', 4);
+    library.writeDevice(file, 'dev', created.items);
+    assert.equal(library.readDevice(file, 'dev').rev, 1);
+    library.writeDevice(file, 'dev', created.items);
+    assert.equal(library.readDevice(file, 'dev').rev, 2);
+  });
+
+  test('a malformed stored rev makes the device record unreadable instead of being rewritten', () => {
+    const file = tmpFile();
+    files.push(file);
+    const created = library.createFromDefaults([], 'Base', 4);
+    library.writeDevice(file, 'dev', created.items);
+    const doc = JSON.parse(fs.readFileSync(file, 'utf8'));
+    doc.devices.dev.rev = -1;
+    fs.writeFileSync(file, JSON.stringify(doc), 'utf8');
+    const loaded = library.readDevice(file, 'dev');
+    assert.equal(loaded.ok, false);
+    assert.equal(loaded.unwritable, true);
+    assert.throws(() => library.writeDevice(file, 'dev', created.items, { expectedRev: 1 }));
+    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).devices.dev.rev, -1);
+  });
+});
+
+describe('stored snapshot validation matches the write-time validators', () => {
+  test('out-of-range lighting and settings are rejected at store time', () => {
+    const good = library.createFromDefaults([], 'GoodName', 3);
+    const badRate = JSON.parse(JSON.stringify(good.items[0].data));
+    badRate.settings.reporteRate = 99;
+    assert.equal(library.validateNativeSnapshot(badRate).valid, false);
+    const badBrightness = JSON.parse(JSON.stringify(good.items[0].data));
+    badBrightness.lighting.brightness = 9999;
+    assert.equal(library.validateNativeSnapshot(badBrightness).valid, false);
+
+    const file = tmpFile();
+    files.push(file);
+    const bad = JSON.parse(JSON.stringify(good.items));
+    bad[0].data.settings.reporteRate = 99;
+    assert.throws(() => library.writeDevice(file, 'dev', bad));
+    assert.equal(fs.existsSync(file), false, 'rejected snapshot must not be persisted');
+  });
+
+  test('stored layer tuples require a valid key type and uint8 codes', () => {
+    const good = library.createFromDefaults([], 'GoodName', 3);
+    const badType = JSON.parse(JSON.stringify(good.items[0].data));
+    badType.layers['0']['11'] = { type: 7, code1: 0, code2: 4 };
+    assert.equal(library.validateNativeSnapshot(badType).valid, false);
+    const badByte = JSON.parse(JSON.stringify(good.items[0].data));
+    badByte.layers['0']['11'] = { type: 16, code1: 0, code2: 300 };
+    assert.equal(library.validateNativeSnapshot(badByte).valid, false);
+  });
+
+  test('hardware read-back fields (sideEffect 0, colorIndex, tickRate, reportRate24G) remain storable', () => {
+    const good = library.createFromDefaults([], 'GoodName', 3);
+    const snapshot = JSON.parse(JSON.stringify(good.items[0].data));
+    snapshot.lighting.sideEffect = 0;
+    snapshot.lighting.colorIndex = 2;
+    snapshot.settings.tickRate = 1;
+    snapshot.settings.reportRate24G = 9;
+    assert.equal(library.validateNativeSnapshot(snapshot).valid, true);
+
+    const file = tmpFile();
+    files.push(file);
+    const items = JSON.parse(JSON.stringify(good.items));
+    items[0].data = snapshot;
+    library.writeDevice(file, 'dev', items);
+    const loaded = library.readDevice(file, 'dev');
+    assert.equal(loaded.ok, true, loaded.error);
+    assert.equal(loaded.items[0].data.lighting.sideEffect, 0);
+    assert.equal(loaded.items[0].data.settings.tickRate, 1);
+  });
+});

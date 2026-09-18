@@ -291,9 +291,20 @@ function decodePacket(raw, expectedRequest = null) {
   // Request-matched GET_INFO CMD 3 offset 0 exception:
   // When expectedRequest descriptor is provided, accept echoed checksum if and only if
   // it strictly matches the expected request descriptor checksum.
+  // Firmware quirk: the device sometimes echoes the request descriptor
+  // checksum instead of computing the reply checksum. Admission through this
+  // exception proves the request was heard, not that the payload is intact,
+  // so version/identity gates must treat a checksumEchoed reply as untrusted.
+  // Remove the exception once the affected firmware revision is obsolete.
+  let checksumEchoed = false;
   if (!checksumValid && expectedRequest && command === COMMANDS.GET_INFO && memoryOffset === 0 && size === 38) {
-    if (expectedRequest.expectedChecksum !== undefined && replyChecksum === expectedRequest.expectedChecksum) {
+    const requestIsGetInfo = expectedRequest.command === undefined || expectedRequest.command === COMMANDS.GET_INFO;
+    const requestOffsetOk = expectedRequest.offset === undefined || expectedRequest.offset === 0;
+    if (requestIsGetInfo && requestOffsetOk
+      && expectedRequest.expectedChecksum !== undefined
+      && replyChecksum === expectedRequest.expectedChecksum) {
       checksumValid = true;
+      checksumEchoed = true;
     }
   }
 
@@ -302,6 +313,7 @@ function decodePacket(raw, expectedRequest = null) {
     status,
     success: status === 0 && checksumValid && reservedValid,
     checksumValid,
+    checksumEchoed,
     reservedValid,
     replyChecksum,
     calculatedChecksum,

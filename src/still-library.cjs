@@ -10,6 +10,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { G75_V2_LIGHTING_ENTRIES } = require('./layout-g75v2.cjs');
 const lightingMemory = require('./lighting-memory.cjs');
+const storeFile = require('./store-file.cjs');
 
 const DATA_SCOPE = 'LightingEffectProfile';
 const STILL_TYPE = 'still';
@@ -575,7 +576,7 @@ function parseLocalDocument(filePath) {
       return { ok: false, unwritable: true, recovered: true, error: 'Still library local file exceeds the bounded size' };
     }
     const raw = fs.readFileSync(filePath, 'utf8');
-    if (raw.length > MAX_LOCAL_FILE_BYTES) {
+    if (Buffer.byteLength(raw, 'utf8') > MAX_LOCAL_FILE_BYTES) {
       return { ok: false, unwritable: true, recovered: true, error: 'Still library local file exceeds the bounded size' };
     }
     let parsed;
@@ -606,24 +607,11 @@ function parseLocalDocument(filePath) {
 }
 
 function saveLocalFileAtomic(filePath, data) {
-  const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmp = path.join(dir, `.still-library-${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2)}.tmp`);
   const text = JSON.stringify(data, null, 2);
   if (Buffer.byteLength(text, 'utf8') > MAX_LOCAL_FILE_BYTES) {
     throw new Error('Still library local file would exceed the bounded size');
   }
-  try {
-    fs.writeFileSync(tmp, text, 'utf8');
-    fs.renameSync(tmp, filePath);
-  } catch (err) {
-    try {
-      if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-    } catch {
-      // ignore tmp cleanup
-    }
-    throw err;
-  }
+  storeFile.writeTextFileAtomic(filePath, text);
 }
 
 function validateStoredItem(raw, seenKeys) {

@@ -1,0 +1,41 @@
+# Host Node 22: package.json has no engines field; electron@44.3.0
+# declares engines.node >= 22.12.0 (see also docs/DEVELOPER.md).
+# macos-latest: node-hid is Darwin-native and detector.cjs shells out
+# to /usr/sbin/ioreg. Electron smoke/mock-ui create a BrowserWindow and
+# call app.exit under a hard timeout (15s / 180s); they do not open HID.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install from lockfile
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Electron smoke
+        timeout-minutes: 5
+        run: npm run smoke
+
+      - name: Electron mock-UI
+        timeout-minutes: 10
+        run: npm run test:mock-ui

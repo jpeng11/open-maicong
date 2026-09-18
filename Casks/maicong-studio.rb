@@ -33,10 +33,11 @@ cask "maicong-studio" do
   ]
 
   caveats <<~EOS
-    Unsigned Apple Silicon build. The cask clears com.apple.quarantine on
-    install. If Gatekeeper still blocks it: System Settings → Privacy &
-    Security → Open Anyway.
+    Ad-hoc signed Apple Silicon build (no Apple Developer ID). The cask clears
+    com.apple.quarantine on install — see the tap README before installing.
+    If Gatekeeper still blocks it: System Settings → Privacy & Security → Open Anyway.
 
-    未签名构建。cask 安装时会去掉隔离属性。若仍拦截：系统设置 → 隐私与安全性 → 仍要打开。
+    Ad-hoc 签名构建（无 Apple Developer ID）。cask 安装时会去掉隔离属性，安装前请阅读 tap README。
+    若仍拦截：系统设置 → 隐私与安全性 → 仍要打开。
   EOS
 end

@@ -71,11 +71,14 @@ contextBridge.exposeInMainWorld('maicongApi', {
   prepareFactoryReset: (scope) => ipcRenderer.invoke('maicong:prepare-factory-reset', scope),
   commitFactoryReset: (spec) => ipcRenderer.invoke('maicong:commit-factory-reset', spec),
   firmwareStatus: () => ipcRenderer.invoke('maicong:firmware-status'),
+  firmwareInterruptedStatus: () => ipcRenderer.invoke('maicong:firmware-interrupted-status'),
   chooseFirmwarePackage: (spec) => ipcRenderer.invoke('maicong:firmware-choose-package', spec),
   reviewFirmware: () => ipcRenderer.invoke('maicong:firmware-review'),
   startFirmware: (spec) => ipcRenderer.invoke('maicong:firmware-start', spec),
+  resumeFirmware: (spec) => ipcRenderer.invoke('maicong:firmware-resume', spec),
   cancelFirmware: (reason) => ipcRenderer.invoke('maicong:firmware-cancel', reason),
   dismissFirmwareReview: () => ipcRenderer.invoke('maicong:firmware-dismiss-review'),
+  discardInterruptedFirmware: () => ipcRenderer.invoke('maicong:firmware-discard-interrupted'),
   onStateUpdate: (callback) => {
     const listener = (_event, state) => callback(state);
     ipcRenderer.on('maicong:state-update', listener);

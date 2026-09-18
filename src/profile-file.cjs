@@ -374,7 +374,11 @@ function userKeysToNative(userKeys) {
     if (!isPlainObject(userKeys[l])) {
       return { valid: false, error: `Official userKeys layer ${l} must be an object` };
     }
-    layers[String(l)] = keys.decodeLayerDiff(userKeys[l], l);
+    try {
+      layers[String(l)] = keys.decodeLayerDiff(userKeys[l], l);
+    } catch (err) {
+      return { valid: false, error: err.message || 'Official userKeys could not be decoded' };
+    }
     const layer = layers[String(l)];
     for (const [slot, def] of Object.entries(layer)) {
       if (!isPlainObject(def) || !isUint8(def.type) || !isUint8(def.code1) || !isUint8(def.code2)) {
@@ -604,9 +608,14 @@ function nativeAdvancedToOfficial(advanced) {
 function lightValueStoreToNative(store) {
   if (store === undefined) return { valid: true, lightingMemory: undefined };
   if (!isPlainObject(store)) return { valid: false, error: 'Official lightValueStore must be an object' };
-  const main = Array.isArray(store.light) ? store.light : [];
-  const side = Array.isArray(store.sideLight) ? store.sideLight : [];
-  const side2 = Array.isArray(store.sideLight2) ? store.sideLight2 : [];
+  for (const field of ['light', 'sideLight', 'sideLight2']) {
+    if (store[field] !== undefined && !Array.isArray(store[field])) {
+      return { valid: false, error: `Official lightValueStore ${field} must be an array when present` };
+    }
+  }
+  const main = store.light === undefined ? [] : store.light;
+  const side = store.sideLight === undefined ? [] : store.sideLight;
+  const side2 = store.sideLight2 === undefined ? [] : store.sideLight2;
   if (!main.length && !side.length && !side2.length) return { valid: true, lightingMemory: undefined };
   const checked = lightingMemory.validateImportedLightingMemory({ main, side, side2 });
   if (!checked.valid) return { valid: false, error: checked.error || 'Official lightValueStore is malformed' };
@@ -622,11 +631,13 @@ function inspectOfficialEnvelope(obj) {
     return { valid: false, error: 'Unsupported profile schema: official KeyboardProfile requires version and data' };
   }
   const version = obj.version;
-  if (version !== 3 && version !== 2) {
-    return { valid: false, error: `Unsupported official profile version: ${version}` };
+  // Version 2 was never traced from a real vendor file; the vendor's broad
+  // version>=2 branch is dispatch evidence, not a schema we can validate.
+  if (version === 2) {
+    return { valid: false, error: 'Unsupported legacy official profile version: 2' };
   }
-  if (version === 2 && !isPlainObject(obj.data)) {
-    return { valid: false, error: 'Official version 2 profile is missing nested data' };
+  if (version !== 3) {
+    return { valid: false, error: `Unsupported official profile version: ${version}` };
   }
   const identity = resolveG75Model(
     obj.vendorId != null ? obj.vendorId : (obj.identity && obj.identity.vendorId),
@@ -707,11 +718,17 @@ function exportOfficialEnvelope(item, options = {}) {
   };
   const advanced = nativeAdvancedToOfficial(src.advanced);
   if (!advanced.valid) return advanced;
+  let userKeys;
+  try {
+    userKeys = nativeToUserKeys(src);
+  } catch (err) {
+    return { valid: false, error: err.message || 'Profile layers could not be encoded' };
+  }
   const data = {
     name,
     performance: nativeToPerformance(src),
     light: nativeToLight(src),
-    userKeys: nativeToUserKeys(src),
+    userKeys,
     triggerTravel: src.triggerTravel || { travelKeys: [] },
     customParam: src.customParam || {},
     lightValueStore: src.lightingMemory

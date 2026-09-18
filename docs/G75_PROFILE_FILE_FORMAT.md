@@ -35,7 +35,7 @@ The legacy branch requires GLWDeviceSDK, rejects a supplied productInfo.productN
 
 Imported names are deduplicated against the profile list by appending/incrementing a trailing '(n)' suffix. Name validation tu requires a nonempty translated/display name with length at least2 and at most q (the configured limit still needs tracing). Duplicate ordinary local names are rejected unless allowConflict applies. Creation th assigns a new unique key and profileIndex-1 for localstorage; it prepends local items and does not write hardware for that destination.
 
-The vendor's broad version>=2 branch is evidence of dispatch, not sufficient validation for a native importer. The future native implementation should explicitly support inspected schemas and reject malformed/unsupported structures before device writes. Nested normalization e1 is supplied by $.PW and remains to inspect.
+The vendor's broad version>=2 branch is evidence of dispatch, not sufficient validation for a native importer. No version-2 schema has been traced, and version-3 field expectations must not be applied to it. Project policy: accept official envelope version 3 only; reject version 2 as an unsupported legacy version until a sample is traced; reject version 1. Reject malformed/unsupported structures before device writes. Nested normalization e1 is supplied by $.PW and remains to inspect.
 
 
 ## Resolved export normalizer (additional static trace)
@@ -50,7 +50,7 @@ The GLW core (`82668.eo`) normalizes userKeys, advancedKeys, performance, trigge
 
 Module 25509 configures `MAX_PROFILE_NAME_LENGTH:15` for both manufacturers. Combined with the previously traced name validator, official profile names are 2–15 characters under that JavaScript length check. The GLW local structure checker expects performance, triggerTravel, userKeys, advancedKeys, light, customParam and lightValueStore, allowing selectedLightEffect/sideSelectedLightEffect/side2SelectedLightEffect plus separately declared common fields. This checker only warns about shape mismatch and is not a sufficient native import validator.
 
-Native source now implements official version-3 KeyboardProfile import as a **local library item** (no HID on import) and export of that envelope from a local or onboard snapshot. Nested `performance`/`light`/`userKeys`/`customParam`/`triggerTravel`/`advancedKeys` must be objects (userKeys exactly 4 layer objects); wrong types fail closed instead of synthesizing sleepTime 6 / brightness 100. Wired VID 14391 / PID 8225 and receiver VID 14391 / PID 12339 plus G75 V2 product name resolve to model 133; ambiguous PID 3033 identities are rejected. Physical writes remain unproven. Cloud share-codes are not implemented.
+Native source now implements official version-3 KeyboardProfile import as a **local library item** (no HID on import) and export of that envelope from a local or onboard snapshot. That supported envelope is version 3; versions 1 and 2 are outside the accepted schema under the policy above. Nested `performance`/`light`/`userKeys`/`customParam`/`triggerTravel`/`advancedKeys` must be objects (userKeys exactly 4 layer objects); wrong types fail closed instead of synthesizing sleepTime 6 / brightness 100. Wired VID 14391 / PID 8225 and receiver VID 14391 / PID 12339 plus G75 V2 product name resolve to model 133; ambiguous PID 3033 identities are rejected. Physical writes remain unproven. Cloud share-codes are not implemented.
 
 
 ### Portable key identities and values

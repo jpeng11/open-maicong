@@ -74,6 +74,38 @@ class MockFirmwareIo {
     this.inFlight = 0;
     this.maxInFlight = 0;
     this.onWrite = null;
+    this.ackDuringDrain = Boolean(options.ackDuringDrain);
+    this._dataSequence = 0;
+    this._recentData = [];
+    this._pendingDrainAck = null;
+    this._detachAfterDrain = false;
+  }
+
+  get dataSequence() {
+    return this.ackDuringDrain ? this._dataSequence : undefined;
+  }
+
+  _stampAndEmit(data) {
+    this._dataSequence += 1;
+    const stamp = this._dataSequence;
+    this._recentData.push({ sequence: stamp, data });
+    for (const listener of this.dataListeners) listener(data, { sequence: stamp });
+    if (this._detachAfterDrain) {
+      this._detachAfterDrain = false;
+      this.disconnect();
+    }
+  }
+
+  drainDataSince(sequence) {
+    const items = this._recentData
+      .filter(item => item.sequence > sequence)
+      .map(item => ({ sequence: item.sequence, data: item.data }));
+    if (this.ackDuringDrain && this._pendingDrainAck) {
+      const data = this._pendingDrainAck;
+      this._pendingDrainAck = null;
+      this._stampAndEmit(data);
+    }
+    return items;
   }
 
   isConnected() {
@@ -133,6 +165,12 @@ class MockFirmwareIo {
 
     if (meta.phase !== 'enter-boot') {
       const plan = this.responsePlan(meta, this.writes.length);
+      if (this.ackDuringDrain && (plan === 'ok' || plan === 'reject')) {
+        this.inFlight = Math.max(0, this.inFlight - 1);
+        this._pendingDrainAck = firmware.buildFlagResponse(plan === 'reject' ? 1 : 0);
+        this._detachAfterDrain = meta.phase === 'success' && this.detachOnSuccess;
+        return { dispatched: true };
+      }
       if (plan === 'ok' || plan === 'reject' || plan === 'unrelated') {
         setImmediate(() => {
           this.inFlight = Math.max(0, this.inFlight - 1);
@@ -159,6 +197,7 @@ function makeCoordinator(io, options = {}) {
     packageBytes: fixtureBytes,
     normalIdentity,
     timeouts: { dispatchMs: 30, flagMs: 30, identityMs: 30 },
+    onBootAnchor: async () => {},
     ...options
   });
 }
@@ -194,7 +233,9 @@ describe('serialized G75 V2 firmware transfer coordinator', () => {
       bootDetachObserved: true,
       bootIdentityConfirmed: true,
       normalDetachObserved: true,
-      normalIdentityConfirmed: true
+      normalIdentityConfirmed: true,
+      bootSerialEvidence: 'both',
+      normalSerialEvidence: 'both'
     });
     assert.equal(result.wireResponseCorrelation, 'serialized-untagged-flag');
 
@@ -237,7 +278,7 @@ describe('serialized G75 V2 firmware transfer coordinator', () => {
 
   test('timeout after a dispatched erase is uncertain and sends no write/check/end retry', async () => {
     const io = new MockFirmwareIo({ responsePlan: meta => meta.phase === 'erase' ? 'timeout' : 'ok' });
-    const result = await makeCoordinator(io, { timeouts: { flagMs: 10, identityMs: 30 } }).run();
+    const result = await makeCoordinator(io, { timeouts: { flagMs: 10, eraseFlagMs: 10, identityMs: 30 } }).run();
     assert.equal(result.success, false);
     assert.equal(result.failedPhase, 'erase');
     assert.equal(result.reason, 'timeout');
@@ -249,12 +290,42 @@ describe('serialized G75 V2 firmware transfer coordinator', () => {
 
   test('unrelated flag responses do not satisfy a request and eventually fail closed as uncertain', async () => {
     const io = new MockFirmwareIo({ responsePlan: meta => meta.phase === 'erase' ? 'unrelated' : 'ok' });
-    const result = await makeCoordinator(io, { timeouts: { flagMs: 10, identityMs: 30 } }).run();
+    const result = await makeCoordinator(io, { timeouts: { flagMs: 10, eraseFlagMs: 10, identityMs: 30 } }).run();
     assert.equal(result.success, false);
     assert.equal(result.failedPhase, 'erase');
     assert.equal(result.reason, 'timeout');
     assert.equal(result.uncertain, true);
     assert.deepEqual(io.writes.map(write => write.meta.phase), ['enter-boot', 'erase']);
+  });
+
+  test('erase waits under the erase budget instead of the generic flag budget', async () => {
+    const io = new MockFirmwareIo({ responsePlan: meta => meta.phase === 'erase' ? 'timeout' : 'ok' });
+    io.onWrite = (_packet, meta, mock) => {
+      if (meta.phase === 'erase') {
+        setTimeout(() => mock.emitData(firmware.buildFlagResponse(0)), 40);
+      }
+    };
+    const result = await makeCoordinator(io, {
+      timeouts: { dispatchMs: 30, flagMs: 10, eraseFlagMs: 500, identityMs: 30 }
+    }).run();
+    assert.equal(result.success, true, result.error);
+    assert.deepEqual(io.writes.map(write => write.meta.phase), [
+      'enter-boot', 'erase', 'write', 'write', 'verify', 'verify', 'end', 'success'
+    ]);
+  });
+
+  test('a flag emitted before a request listener is armed cannot satisfy that request', async () => {
+    const io = new MockFirmwareIo({ responsePlan: meta => meta.phase === 'write' ? 'timeout' : 'ok' });
+    io.onWrite = (_packet, meta, mock) => {
+      if (meta.phase === 'write') mock.emitData(firmware.buildFlagResponse(0));
+    };
+    const result = await makeCoordinator(io, { timeouts: { flagMs: 20, identityMs: 30 } }).run();
+    assert.equal(result.success, false);
+    assert.equal(result.failedPhase, 'write');
+    assert.equal(result.reason, 'timeout');
+    assert.equal(result.uncertain, true);
+    assert.equal(result.bytesWritten, 0, 'a spurious pre-write flag must not complete the chunk');
+    assert.deepEqual(io.writes.map(write => write.meta.phase), ['enter-boot', 'erase', 'write']);
   });
 
   test('cancellation during a dispatched write stops the current transfer without follow-on writes', async () => {
@@ -426,6 +497,58 @@ describe('serialized G75 V2 firmware transfer coordinator', () => {
     assert.equal(io.writes.length, 0);
   });
 
+  test('a bootloader without a serial string binds by USB location and is marked location-only', async () => {
+    const seriallessBootIdentity = { ...bootIdentity, serialNumber: null };
+    const io = new MockFirmwareIo({
+      identityPlan: request => (
+        request.phase === 'boot-confirmation'
+          ? (io.attach(), seriallessBootIdentity)
+          : (io.attach(), returnedNormalIdentity)
+      )
+    });
+    const result = await makeCoordinator(io).run();
+    assert.equal(result.success, true);
+    assert.equal(result.bootIdentity.serialNumber, null);
+    assert.equal(result.transition.bootSerialEvidence, 'location-only');
+    // The boot->normal transition anchor is the serial-less boot identity, so
+    // that binding is location-only too; the stricter normal<->normal check
+    // afterwards still confirms serial continuity with the reviewed device.
+    assert.equal(result.transition.normalSerialEvidence, 'location-only');
+  });
+
+  test('refuses enter-boot when the boot-anchor hook is missing', async () => {
+    const io = new MockFirmwareIo();
+    const result = await makeCoordinator(io, { onBootAnchor: null }).run();
+    assert.equal(result.success, false);
+    assert.equal(result.failedPhase, 'enter-boot');
+    assert.equal(result.reason, 'anchor-required');
+    assert.equal(result.dispatched, false);
+    assert.equal(result.dispatchStatus, 'no');
+    assert.deepEqual(io.writes, []);
+  });
+
+  test('a flag stamped during drain is still accepted when the listener is already armed', async () => {
+    const io = new MockFirmwareIo({ detachOnEnter: true, detachOnSuccess: true, ackDuringDrain: true });
+    const result = await makeCoordinator(io, { timeouts: { dispatchMs: 30, flagMs: 40, identityMs: 30 } }).run();
+    assert.equal(result.success, true, result.error);
+    assert.ok(io.writes.some(write => write.meta.phase === 'erase'));
+  });
+
+  test('a serial present on both sides must still match during transitions', async () => {
+    const io = new MockFirmwareIo({
+      identityPlan: request => (
+        request.phase === 'boot-confirmation'
+          ? (io.attach(), { ...bootIdentity, serialNumber: 'DIFFERENT-SERIAL' })
+          : (io.attach(), returnedNormalIdentity)
+      )
+    });
+    const result = await makeCoordinator(io).run();
+    assert.equal(result.success, false);
+    assert.equal(result.failedPhase, 'boot-confirmation');
+    assert.equal(result.reason, 'ambiguous-identity');
+    assert.deepEqual(io.writes.map(write => write.meta.phase), ['enter-boot']);
+  });
+
   test('ambiguous boot identity stops before erase', async () => {
     const io = new MockFirmwareIo({
       identityPlan: request => request.phase === 'boot-confirmation' ? [bootIdentity, { ...bootIdentity, path: 'other' }] : returnedNormalIdentity
@@ -438,3 +561,146 @@ describe('serialized G75 V2 firmware transfer coordinator', () => {
     assert.deepEqual(io.writes.map(write => write.meta.phase), ['enter-boot']);
   });
 });
+
+describe('boot-mode transfer resume', () => {
+  const resumeAnchor = {
+    targetKey: 'fixture',
+    locationId: normalIdentity.locationId,
+    serialNumber: normalIdentity.serialNumber,
+    packageSha256: fixtureCatalog.fixture.package.sha256
+  };
+
+  test('resumeFromBoot skips enter-boot and binds the unique boot candidate to the anchor', async () => {
+    const io = new MockFirmwareIo({ detachOnSuccess: true });
+    io.connected = false;
+    const result = await makeCoordinator(io, { normalIdentity: null }).run({
+      resumeFromBoot: true,
+      bootAnchor: resumeAnchor
+    });
+    assert.equal(result.success, true, result.error);
+    assert.equal(result.resumedFromBoot, true);
+    assert.deepEqual(io.writes.map(write => write.meta.phase), [
+      'erase', 'write', 'write', 'verify', 'verify', 'end', 'success'
+    ]);
+    assert.equal(result.transition.bootSerialEvidence, 'both');
+    assert.equal(result.transition.normalSerialEvidence, 'both');
+  });
+
+  test('resumeFromBoot fails closed on zero or ambiguous boot candidates without dispatch', async () => {
+    const none = new MockFirmwareIo({
+      identityPlan: request => request.phase === 'boot-confirmation' ? [] : returnedNormalIdentity
+    });
+    none.connected = false;
+    const missing = await makeCoordinator(none, { normalIdentity: null }).run({
+      resumeFromBoot: true,
+      bootAnchor: resumeAnchor
+    });
+    assert.equal(missing.success, false);
+    assert.equal(missing.reason, 'no-candidate');
+    assert.equal(missing.dispatched, false);
+    assert.equal(missing.uncertain, false);
+    assert.deepEqual(none.writes, []);
+
+    const many = new MockFirmwareIo({
+      identityPlan: request => request.phase === 'boot-confirmation'
+        ? [bootIdentity, { ...bootIdentity, path: 'other' }]
+        : returnedNormalIdentity
+    });
+    many.connected = false;
+    const ambiguous = await makeCoordinator(many, { normalIdentity: null }).run({
+      resumeFromBoot: true,
+      bootAnchor: resumeAnchor
+    });
+    assert.equal(ambiguous.success, false);
+    assert.equal(ambiguous.reason, 'ambiguous-identity');
+    assert.equal(ambiguous.dispatched, false);
+    assert.equal(ambiguous.uncertain, false);
+    assert.deepEqual(many.writes, []);
+  });
+
+  test('resumeFromBoot unique identity miss reports dispatched no', async () => {
+    const wrongPid = new MockFirmwareIo({
+      identityPlan: request => request.phase === 'boot-confirmation'
+        ? { ...bootIdentity, productId: 0x9999 }
+        : returnedNormalIdentity
+    });
+    wrongPid.connected = false;
+    const mismatched = await makeCoordinator(wrongPid, { normalIdentity: null }).run({
+      resumeFromBoot: true,
+      bootAnchor: resumeAnchor
+    });
+    assert.equal(mismatched.success, false);
+    assert.equal(mismatched.reason, 'ambiguous-identity');
+    assert.equal(mismatched.dispatched, false);
+    assert.equal(mismatched.dispatchStatus, 'no');
+    assert.equal(mismatched.uncertain, false);
+    assert.deepEqual(wrongPid.writes, []);
+
+    const wrongLocation = new MockFirmwareIo({
+      identityPlan: request => request.phase === 'boot-confirmation'
+        ? { ...bootIdentity, locationId: 0x11111111 }
+        : returnedNormalIdentity
+    });
+    wrongLocation.connected = false;
+    const unbound = await makeCoordinator(wrongLocation, { normalIdentity: null }).run({
+      resumeFromBoot: true,
+      bootAnchor: resumeAnchor
+    });
+    assert.equal(unbound.success, false);
+    assert.equal(unbound.reason, 'ambiguous-identity');
+    assert.equal(unbound.dispatched, false);
+    assert.equal(unbound.dispatchStatus, 'no');
+    assert.equal(unbound.uncertain, false);
+    assert.deepEqual(wrongLocation.writes, []);
+  });
+
+  test('resumeFromBoot refuses a missing package SHA unless allowDifferentPackage is set', async () => {
+    const missingSha = { targetKey: resumeAnchor.targetKey, locationId: resumeAnchor.locationId, serialNumber: resumeAnchor.serialNumber };
+    const deniedIo = new MockFirmwareIo();
+    deniedIo.connected = false;
+    const denied = await makeCoordinator(deniedIo, { normalIdentity: null }).run({
+      resumeFromBoot: true,
+      bootAnchor: missingSha
+    });
+    assert.equal(denied.success, false);
+    assert.equal(denied.reason, 'invalid-anchor');
+    assert.equal(denied.dispatched, false);
+    assert.deepEqual(deniedIo.writes, []);
+
+    const allowedIo = new MockFirmwareIo({ detachOnSuccess: true });
+    allowedIo.connected = false;
+    const allowed = await makeCoordinator(allowedIo, { normalIdentity: null }).run({
+      resumeFromBoot: true,
+      bootAnchor: missingSha,
+      allowDifferentPackage: true
+    });
+    assert.equal(allowed.success, true, allowed.error);
+  });
+
+  test('resumeFromBoot refuses a package SHA mismatch unless allowDifferentPackage is set', async () => {
+    const mismatched = { ...resumeAnchor, packageSha256: 'ab'.repeat(32) };
+    const deniedIo = new MockFirmwareIo();
+    deniedIo.connected = false;
+    const denied = await makeCoordinator(deniedIo, { normalIdentity: null }).run({
+      resumeFromBoot: true,
+      bootAnchor: mismatched
+    });
+    assert.equal(denied.success, false);
+    assert.equal(denied.reason, 'package-mismatch');
+    assert.equal(denied.dispatched, false);
+    assert.equal(denied.uncertain, false);
+    assert.deepEqual(deniedIo.writes, []);
+
+    const allowedIo = new MockFirmwareIo({ detachOnSuccess: true });
+    allowedIo.connected = false;
+    const allowed = await makeCoordinator(allowedIo, { normalIdentity: null }).run({
+      resumeFromBoot: true,
+      bootAnchor: mismatched,
+      allowDifferentPackage: true
+    });
+    assert.equal(allowed.success, true, allowed.error);
+    assert.equal(allowed.resumedFromBoot, true);
+    assert.equal(allowedIo.writes.some(write => write.meta.phase === 'enter-boot'), false);
+  });
+});
+

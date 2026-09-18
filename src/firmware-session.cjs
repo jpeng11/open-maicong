@@ -238,7 +238,7 @@ class FirmwareSession {
         boot: this._review.target && this._review.target.boot ? this._review.target.boot : (target && target.boot),
         modeRule: mode ? cloneJson(mode) : null
       } : null,
-      inProgress: Boolean(this.controller && this.controller._operation),
+      inProgress: this.isUpdateInFlight(),
       progress: this._progress.slice(),
       lastOutcome: this._lastOutcome,
       nativeWriteCount: this.nativeWriteCount(),
@@ -439,6 +439,87 @@ class FirmwareSession {
 
   cancel(reason = 'Firmware update cancelled by user') {
     const result = this.controller.cancel(reason);
+    return {
+      ...result,
+      nativeWriteCount: this.nativeWriteCount(),
+      nativeWritePhases: this.nativeWritePhases()
+    };
+  }
+
+  isUpdateInFlight() {
+    return Boolean(this.controller && this.controller._operation);
+  }
+
+  interruptedUpdateStatus() {
+    return this.controller.interruptedUpdateStatus({ backupDir: this.backupDir });
+  }
+
+  discardInterruptedUpdate() {
+    return this.controller.discardInterruptedUpdate({ backupDir: this.backupDir });
+  }
+
+  async resumeInterruptedUpdate(options = {}) {
+    const confirmed = options.confirmed === true || options.confirm === true || options.confirmation === true;
+    if (!confirmed) {
+      const denied = await this.controller.resumeInterruptedUpdate({
+        confirmed: false,
+        backupDir: this.backupDir
+      });
+      return {
+        ...(denied || {
+          success: false,
+          fullUpdaterSuccess: false,
+          error: 'Explicit firmware update confirmation is required',
+          reason: 'confirmation-required'
+        }),
+        nativeWriteCount: this.nativeWriteCount(),
+        nativeWritePhases: this.nativeWritePhases()
+      };
+    }
+
+    let bytes = asBuffer(options.packageBytes);
+    if (!bytes && this._selected) bytes = this._selected.bytes;
+    if (!bytes && typeof options.filePath === 'string' && options.filePath) {
+      const loaded = this.selectPackageFile(options.filePath);
+      if (!loaded.success) {
+        return {
+          ...loaded,
+          fullUpdaterSuccess: false,
+          nativeWriteCount: this.nativeWriteCount(),
+          nativeWritePhases: this.nativeWritePhases()
+        };
+      }
+      bytes = this._selected.bytes;
+    }
+    if (!bytes) {
+      return {
+        success: false,
+        fullUpdaterSuccess: false,
+        error: 'Choose an official firmware package file first',
+        reason: 'invalid-package',
+        nativeWriteCount: this.nativeWriteCount(),
+        nativeWritePhases: this.nativeWritePhases()
+      };
+    }
+
+    this._progress = [];
+    const result = await this.controller.resumeInterruptedUpdate({
+      confirmed: true,
+      backupDir: this.backupDir,
+      packageBytes: bytes,
+      allowDifferentPackage: options.allowDifferentPackage === true,
+      backupPath: typeof options.backupPath === 'string' && options.backupPath
+        ? options.backupPath
+        : undefined,
+      onProgress: (event) => {
+        this._progress.push(event);
+        if (typeof this.onProgress === 'function') this.onProgress(event);
+        if (typeof options.onProgress === 'function') options.onProgress(event);
+      },
+      signal: options.signal,
+      drainTimeoutMs: options.drainTimeoutMs
+    });
+    this._lastOutcome = result;
     return {
       ...result,
       nativeWriteCount: this.nativeWriteCount(),

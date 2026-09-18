@@ -916,4 +916,139 @@ describe('Adversarial Mocked Transport & Safety Verification', () => {
     assert.match(invalidRes2.error, /invalid profile schema/i);
     assert.strictEqual(mock.writtenBuffers.length, 0, 'Zero writes sent on non-canonical layer key');
   });
+
+  test('26. Short read replies are rejected: readRange fails instead of returning truncated data', async () => {
+    const mock = new MockHIDDevice();
+
+    mock.customResponder = (writtenBuf, dev) => {
+      const cmd = writtenBuf[2];
+      if (cmd === protocol.COMMANDS.GET_USER_KEY_MATRIX) {
+        // Answer every read with 8 valid bytes regardless of the requested size
+        const offset = writtenBuf[6] | (writtenBuf[7] << 8);
+        const reply = makeReplyBuffer({ command: cmd, offset, data: new Array(8).fill(0) });
+        setImmediate(() => dev.emit('data', reply));
+      }
+    };
+
+    attachMockDevice(mock);
+
+    const res = await transport.readRange(protocol.COMMANDS.GET_USER_KEY_MATRIX, 0, 384);
+    assert.strictEqual(res.success, false);
+    assert.match(res.error, /size mismatch|incomplete/i);
+    assert.strictEqual(res.data, undefined, 'truncated buffer must not be reported as data');
+
+    const layer = await transport.readLayer(0, 0);
+    assert.strictEqual(layer.success, false);
+    assert.match(layer.error, /size mismatch|incomplete/i);
+  });
+
+  test('27. GET_INFO offset 0 still accepts the verified 38-byte reply to a 56-byte request', async () => {
+    const mock = new MockHIDDevice();
+    const infoFixture = require('./fixtures/info-reply.json');
+    const payload = Buffer.from(infoFixture.query56.payloadHex, 'hex').subarray(0, 38);
+    assert.strictEqual(payload.length, 38);
+
+    mock.customResponder = (writtenBuf, dev) => {
+      const cmd = writtenBuf[2];
+      if (cmd === protocol.COMMANDS.GET_INFO) {
+        const reply = makeReplyBuffer({ command: cmd, offset: 0, data: Array.from(payload) });
+        setImmediate(() => dev.emit('data', reply));
+      }
+    };
+
+    attachMockDevice(mock);
+
+    const res = await transport.readRange(protocol.COMMANDS.GET_INFO, 0, 56);
+    assert.strictEqual(res.success, true, res.error);
+    assert.strictEqual(res.data.length, 38);
+  });
+
+  test('28. GET_INFO request-descriptor echo is checksumEchoed and cannot mint identity', async () => {
+    const infoFixture = require('./fixtures/info-reply.json');
+    const payload = Buffer.from(infoFixture.query56.payloadHex, 'hex').subarray(0, 38);
+    const calculated = protocol.calculateChecksum([payload.length, 0, 0, 0, ...payload]);
+    assert.notEqual(calculated, 0x38, 'fixture payload must take the echo exception, not a real checksum');
+
+    function echoReply() {
+      const buf = Buffer.alloc(64, 0);
+      buf[0] = protocol.FLAG_RESPONSE;
+      buf[1] = protocol.COMMANDS.GET_INFO;
+      buf[2] = 0;
+      buf[3] = 0x38;
+      buf[4] = 38;
+      for (let i = 0; i < payload.length; i++) buf[8 + i] = payload[i];
+      return buf;
+    }
+
+    const mock = new MockHIDDevice();
+    mock.customResponder = (writtenBuf, dev) => {
+      if (writtenBuf[2] === protocol.COMMANDS.GET_INFO) {
+        setImmediate(() => dev.emit('data', echoReply()));
+      }
+    };
+    attachMockDevice(mock);
+    transport.lastState.device = {
+      vendorId: 14391,
+      productId: 12339,
+      serialNumber: 'ECHO-SN',
+      path: 'mock://echo',
+      interface: 1
+    };
+
+    const pkt = await transport.sendPacket({
+      command: protocol.COMMANDS.GET_INFO,
+      offset: 0,
+      size: 56,
+      timeoutMs: 300
+    });
+    assert.strictEqual(pkt.success, true, pkt.error);
+    assert.strictEqual(pkt.checksumEchoed, true);
+    assert.strictEqual(pkt.packet.checksumEchoed, true);
+
+    const info = await transport.readFirmwareInfo();
+    assert.strictEqual(info.success, true, info.error);
+    assert.strictEqual(info.checksumEchoed, true);
+    assert.strictEqual(info.identity, null);
+
+    const parsed = protocol.parseInfo(payload);
+    assert.equal(transport._fullIdentity(parsed, { checksumEchoed: true }), null);
+    const trusted = transport._fullIdentity(parsed);
+    assert.equal(trusted.firmwareRaw, 0x0114);
+    assert.equal(trusted.rfFirmwareRaw, 0x0130);
+
+    const prep = await transport.prepareFactoryReset({ scope: 'active' });
+    assert.strictEqual(prep.success, false);
+    assert.match(prep.error, /echo|untrusted|checksum/i);
+    assert.equal(prep.identity, undefined);
+  });
+
+  test('29. echoed GET_INFO is retried before _fullIdentity is derived', async () => {
+    const mock = new MockGlwMemoryDevice();
+    let infoReads = 0;
+    const origWrite = mock.write.bind(mock);
+    mock.write = function echoThenTrust(buf) {
+      if (buf[2] === protocol.COMMANDS.GET_INFO) {
+        infoReads += 1;
+        if (infoReads === 1) {
+          this.writtenBuffers.push(Buffer.from(buf));
+          const payload = this.info.subarray(0, 38);
+          const reply = Buffer.alloc(64, 0);
+          reply[0] = protocol.FLAG_RESPONSE;
+          reply[1] = protocol.COMMANDS.GET_INFO;
+          reply[3] = 0x38;
+          reply[4] = 38;
+          for (let i = 0; i < payload.length; i++) reply[8 + i] = payload[i];
+          setImmediate(() => this.emit('data', reply));
+          return;
+        }
+      }
+      return origWrite(buf);
+    };
+    transport.installTestAdapter(mock);
+    const prep = await transport.prepareFactoryReset({ scope: 'active' });
+    assert.strictEqual(prep.success, true, prep.error);
+    assert.ok(prep.identity);
+    assert.equal(prep.identity.firmwareRaw, 0x0114);
+    assert.ok(infoReads >= 2, 'identity must come from a retried non-echoed GET_INFO');
+  });
 });

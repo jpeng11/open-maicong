@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const lightingMemory = require('./lighting-memory.cjs');
+const storeFile = require('./store-file.cjs');
 
 const SCHEMA = 'maicong.g75v2.app-bind';
 const SCHEMA_VERSION = '1.0.0';
@@ -137,10 +138,18 @@ function writeDevice(filePath, deviceKey, binds) {
   if (!checked.valid) throw new Error(checked.error);
   let file = emptyFile();
   if (filePath && fs.existsSync(filePath)) {
-    const raw = fs.readFileSync(filePath, 'utf8');
-    const parsed = JSON.parse(raw);
+    const st = fs.statSync(filePath);
+    if (!st.isFile() || st.size > MAX_FILE_BYTES) {
+      throw new Error('App bind file exceeds the bounded size; existing file was left unchanged');
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    } catch (err) {
+      throw new Error(`${err.message || 'App bind file is not valid JSON'}; existing file was left unchanged`);
+    }
     if (!isPlainObject(parsed) || !isPlainObject(parsed.devices)) {
-      throw new Error('App bind file is malformed');
+      throw new Error('App bind file is malformed; existing file was left unchanged');
     }
     file = parsed;
     file.schema = SCHEMA;
@@ -156,11 +165,7 @@ function writeDevice(filePath, deviceKey, binds) {
   if (Buffer.byteLength(json, 'utf8') > MAX_FILE_BYTES) {
     throw new Error('App bind file exceeds the bounded size');
   }
-  const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmp = `${filePath}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, json, 'utf8');
-  fs.renameSync(tmp, filePath);
+  storeFile.writeTextFileAtomic(filePath, json);
   return checked.binds;
 }
 

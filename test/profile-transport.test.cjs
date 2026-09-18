@@ -103,6 +103,19 @@ describe('profile library hardware path (mock HID only)', () => {
     assert.equal(copied.item.data.lighting.effect, mock.func[8]);
   });
 
+  test('copy onboard to local stores unknown hardware sideEffect 9 and main effect 99', async () => {
+    const mock = new MockGlwMemoryDevice();
+    mock.func[8] = 99;
+    mock.func[24] = 9;
+    attachMock(mock);
+    await transport.queryStatus();
+    const copied = await transport.copyOnboardToLocal(0);
+    assert.equal(copied.success, true, copied.error);
+    assert.equal(copied.hardwareWrites, 0);
+    assert.equal(copied.item.data.lighting.sideEffect, 9);
+    assert.equal(copied.item.data.lighting.effect, 99);
+  });
+
   test('local create and official import write no HID', async () => {
     const mock = new MockGlwMemoryDevice();
     attachMock(mock);
@@ -122,6 +135,128 @@ describe('profile library hardware path (mock HID only)', () => {
     assert.equal(draft.success, true);
     assert.equal(draft.hardwareWrites, 0);
     assert.equal(mock.writtenBuffers.length, 0);
+  });
+
+  test('local draft save retries once on a rev conflict and preserves the concurrent write', async () => {
+    const mock = new MockGlwMemoryDevice();
+    attachMock(mock);
+    await transport.queryStatus();
+    const created = await transport.createLocalProfile('AB');
+    assert.equal(created.success, true, created.error);
+
+    const origWrite = library.writeDevice;
+    let calls = 0;
+    library.writeDevice = function (...args) {
+      calls++;
+      if (calls === 1) {
+        // A concurrent actor commits between this transport's read and write
+        const [file, deviceKey] = args;
+        const fresh = library.readDevice(file, deviceKey);
+        const concurrent = library.createFromDefaults(fresh.items, 'Concurrent', 4);
+        origWrite(file, deviceKey, concurrent.items, { expectedRev: fresh.rev });
+        const conflict = new Error('Profile library changed on disk since it was read');
+        conflict.code = 'REV_MISMATCH';
+        throw conflict;
+      }
+      return origWrite.apply(this, args);
+    };
+    try {
+      const preview = transport.loadLocalProfilePreview(created.key);
+      const draft = await transport.saveLocalProfileDraft(created.key, preview.item.data);
+      assert.equal(draft.success, true, draft.error);
+      assert.equal(calls, 2, 'first write conflicts, the retry re-reads and succeeds');
+    } finally {
+      library.writeDevice = origWrite;
+    }
+    const loaded = library.readDevice(transport.profileLibraryPath, library.deviceStorageKey(transport.lastState.device));
+    assert.ok(loaded.items.some((i) => i.name === 'Concurrent'), 'concurrent save must survive');
+    assert.ok(loaded.items.some((i) => i.key === created.key), 'draft target must survive');
+  });
+
+  test('autosave landing during moveLocalToOnboard is preserved by the conflict merge', async () => {
+    const mock = new MockGlwMemoryDevice();
+    attachMock(mock);
+    await transport.queryStatus();
+    const keep = await transport.createLocalProfile('Keep');
+    const moving = await transport.createLocalProfile('Move');
+    assert.equal(keep.success, true, keep.error);
+    assert.equal(moving.success, true, moving.error);
+
+    mock.delayCommands.set(protocol.COMMANDS.SET_FUNC_CONFIG, 80);
+    const pending = transport.moveLocalToOnboard(moving.key, 'KeyboardProfile@keyboard@1', { activate: false });
+    await new Promise((r) => setTimeout(r, 20));
+    const preview = transport.loadLocalProfilePreview(keep.key);
+    const autosaved = await transport.saveLocalProfileDraft(keep.key, preview.item.data);
+    assert.equal(autosaved.success, true, autosaved.error);
+    const res = await pending;
+    assert.equal(res.success, true, res.error);
+
+    const loaded = library.readDevice(transport.profileLibraryPath, library.deviceStorageKey(transport.lastState.device));
+    assert.ok(loaded.items.some((i) => i.key === keep.key), 'autosaved profile must survive the move');
+    assert.ok(loaded.items.every((i) => i.key !== moving.key), 'moved profile must leave local storage');
+    assert.equal(loaded.items.length, 2, 'parked outgoing profile replaces the moved one');
+  });
+
+  test('local save during outgoing export of moveLocalToOnboard survives persist', async () => {
+    const mock = new MockGlwMemoryDevice();
+    attachMock(mock);
+    await transport.queryStatus();
+    const keep = await transport.createLocalProfile('Keep');
+    const moving = await transport.createLocalProfile('Move');
+    assert.equal(keep.success, true, keep.error);
+    assert.equal(moving.success, true, moving.error);
+
+    mock.delayCommands.set(protocol.COMMANDS.GET_FUNC_CONFIG, 80);
+    const pending = transport.moveLocalToOnboard(moving.key, 'KeyboardProfile@keyboard@1', { activate: false });
+    await new Promise((r) => setTimeout(r, 20));
+    const concurrent = await transport.createLocalProfile('Concurrent');
+    assert.equal(concurrent.success, true, concurrent.error);
+    const res = await pending;
+    assert.equal(res.success, true, res.error);
+
+    const loaded = library.readDevice(transport.profileLibraryPath, library.deviceStorageKey(transport.lastState.device));
+    assert.ok(loaded.items.some((i) => i.key === keep.key), 'unrelated local profile must survive');
+    assert.ok(loaded.items.some((i) => i.key === concurrent.key), 'save that landed during exportProfile must survive');
+    assert.ok(loaded.items.every((i) => i.key !== moving.key), 'moved profile must leave local storage');
+    assert.ok(loaded.items.some((i) => i.name && i.name !== 'Keep' && i.name !== 'Concurrent'), 'outgoing onboard snapshot must be parked');
+  });
+
+  test('copy, delete, and onboard reorder still persist through the hardware plan', async () => {
+    const mock = new MockGlwMemoryDevice();
+    attachMock(mock);
+    await transport.queryStatus();
+    const local = await transport.createLocalProfile('Stay');
+    assert.equal(local.success, true, local.error);
+
+    const copied = await transport.copyOnboardToOnboard(
+      'KeyboardProfile@keyboard@0',
+      'KeyboardProfile@keyboard@2',
+      { activate: false }
+    );
+    assert.equal(copied.success, true, copied.error);
+    let loaded = library.readDevice(transport.profileLibraryPath, library.deviceStorageKey(transport.lastState.device));
+    assert.ok(loaded.items.some((i) => i.key === local.key), 'local profile must survive onboard copy');
+    assert.ok(loaded.items.some((i) => i.extra && i.extra.displayName), 'replaced onboard slot must be parked locally');
+
+    const beforeDelete = transport.getProfileLibrary();
+    const onboardBefore = (beforeDelete.list || []).filter((i) => i.type === 'keyboard');
+    const toDelete = onboardBefore.find((i) => i.profileIndex !== transport.lastState.activeProfileIndex);
+    assert.ok(toDelete, 'need a non-active onboard slot to delete');
+    const deleted = await transport.deleteOnboardProfile(toDelete.key);
+    assert.equal(deleted.success, true, deleted.error);
+    assert.equal(transport.lastState.base.profileCount, onboardBefore.length - 1);
+
+    const snap = transport.getProfileLibrary();
+    const onboardKeys = (snap.list || []).filter((i) => i.type === 'keyboard').map((i) => i.key);
+    const localKeys = (snap.list || []).filter((i) => i.type === 'localstorage').map((i) => i.key);
+    const reordered = await transport.reorderProfiles([...onboardKeys.slice().reverse(), ...localKeys]);
+    assert.equal(reordered.success, true, reordered.error);
+    loaded = library.readDevice(transport.profileLibraryPath, library.deviceStorageKey(transport.lastState.device));
+    assert.ok(loaded.items.some((i) => i.key === local.key), 'local profile must survive onboard reorder');
+    assert.deepEqual(
+      (transport.lastState.base.profileOrder || []).slice(0, transport.lastState.base.profileCount),
+      onboardKeys.slice().reverse().map((key) => Number(key.split('@').pop()))
+    );
   });
 
   test('failed name replication reports partial slots and does not claim all names', async () => {

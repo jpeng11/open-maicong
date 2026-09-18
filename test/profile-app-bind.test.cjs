@@ -147,15 +147,101 @@ describe('app bind watcher', () => {
     assert.equal(already.alreadyActive, true);
     assert.equal(calls.length, 0);
   });
+
+  test('stop() during getFrontmost or switchProfile abandons the tick', async () => {
+    let releaseFront;
+    let releaseSwitch;
+    const switches = [];
+    const watcher = new AppBindWatcher({
+      intervalMs: 60_000,
+      getBinds: () => [{ profileIndex: 2, bundleId: 'com.mock.game', displayName: 'Mock Game' }],
+      getActiveProfile: () => 0,
+      isConnected: () => true,
+      isBusy: () => false,
+      getFrontmost: () => new Promise((resolve) => { releaseFront = resolve; }),
+      switchProfile: (idx) => {
+        switches.push(idx);
+        return new Promise((resolve) => { releaseSwitch = resolve; });
+      }
+    });
+
+    watcher.start();
+    const frontTick = watcher.tick();
+    watcher.stop();
+    releaseFront({ bundleId: 'com.mock.game', displayName: 'Mock Game' });
+    const abandonedAtFront = await frontTick;
+    assert.equal(abandonedAtFront.skipped, true);
+    assert.equal(abandonedAtFront.reason, 'stopped');
+    assert.equal(switches.length, 0);
+    assert.equal(watcher.lastSwitch, null);
+
+    releaseFront = undefined;
+    releaseSwitch = undefined;
+    watcher.start();
+    const switchTick = watcher.tick();
+    const frontReady = await new Promise((resolve) => {
+      const start = Date.now();
+      const poll = () => {
+        if (typeof releaseFront === 'function') {
+          resolve(true);
+          return;
+        }
+        if (Date.now() - start > 400) {
+          resolve(false);
+          return;
+        }
+        setTimeout(poll, 5);
+      };
+      poll();
+    });
+    assert.equal(frontReady, true);
+    releaseFront({ bundleId: 'com.mock.game', displayName: 'Mock Game' });
+    const started = await new Promise((resolve) => {
+      const start = Date.now();
+      const poll = () => {
+        if (typeof releaseSwitch === 'function') {
+          resolve(true);
+          return;
+        }
+        if (Date.now() - start > 400) {
+          resolve(false);
+          return;
+        }
+        setTimeout(poll, 5);
+      };
+      poll();
+    });
+    assert.equal(started, true);
+    watcher.stop();
+    releaseSwitch({ success: true });
+    const abandonedAtSwitch = await switchTick;
+    assert.equal(abandonedAtSwitch.skipped, true);
+    assert.equal(abandonedAtSwitch.reason, 'stopped');
+    assert.equal(watcher.lastSwitch, null);
+  });
 });
 
 describe('transport app binds on the live device key', () => {
+  let tmpDir;
   afterEach(() => {
     transport.disconnect();
     transport.profileAppBindPath = null;
+    transport.profileLibraryPath = null;
+    transport.stillLibraryPath = null;
+    transport.gifLibraryPath = null;
+    transport.lightingMemoryPath = null;
+    if (tmpDir) {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      tmpDir = null;
+    }
   });
 
   test('bind, query, and auto-unbind when the onboard slot is removed', async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maicong-app-bind-hw-'));
+    transport.profileLibraryPath = path.join(tmpDir, 'profile-library.json');
+    transport.stillLibraryPath = path.join(tmpDir, 'still.json');
+    transport.gifLibraryPath = path.join(tmpDir, 'gif.json');
+    transport.lightingMemoryPath = path.join(tmpDir, 'lightmem.json');
     const file = tmpFile();
     transport.profileAppBindPath = file;
     const mock = new MockGlwMemoryDevice();
@@ -172,5 +258,46 @@ describe('transport app binds on the live device key', () => {
     assert.equal(moved.success, true, moved.error);
     assert.equal(moved.autoUnbound, true);
     assert.equal(transport.listAppBinds().binds.length, 0);
+  });
+
+  test('listAppBinds cache updates on bind/unbind and misses on device change', async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maicong-app-bind-cache-'));
+    transport.profileLibraryPath = path.join(tmpDir, 'profile-library.json');
+    transport.stillLibraryPath = path.join(tmpDir, 'still.json');
+    transport.gifLibraryPath = path.join(tmpDir, 'gif.json');
+    transport.lightingMemoryPath = path.join(tmpDir, 'lightmem.json');
+    const file = tmpFile();
+    transport.profileAppBindPath = file;
+    const mock = new MockGlwMemoryDevice();
+    transport.installTestAdapter(mock);
+    await transport.queryStatus();
+
+    const bound = transport.bindProfileApp({
+      profileIndex: 1,
+      bundleId: 'com.mock.game',
+      displayName: 'Mock Game'
+    });
+    assert.equal(bound.success, true, bound.error);
+    assert.equal(transport.listAppBinds().binds[0].bundleId, 'com.mock.game');
+
+    const deviceKey = appBind.deviceStorageKey(transport.lastState.device);
+    const other = appBind.setBind([], { profileIndex: 2, bundleId: 'com.other.game', displayName: 'Other' });
+    appBind.writeDevice(file, deviceKey, other.binds);
+    assert.equal(transport.listAppBinds().binds[0].bundleId, 'com.mock.game', 'warm cache must ignore an out-of-process file write');
+
+    appBind.writeDevice(file, deviceKey, bound.binds);
+    const unbound = transport.unbindProfileApp(1);
+    assert.equal(unbound.success, true, unbound.error);
+    assert.equal(unbound.changed, true);
+    assert.equal(transport.listAppBinds().binds.length, 0);
+
+    const rebound = transport.bindProfileApp({
+      profileIndex: 0,
+      bundleId: 'com.mock.game',
+      displayName: 'Mock Game'
+    });
+    assert.equal(rebound.success, true, rebound.error);
+    transport.lastState.device = { ...transport.lastState.device, serialNumber: 'OTHER-SN' };
+    assert.equal(transport.listAppBinds().binds.length, 0, 'device-key change must miss the cache');
   });
 });

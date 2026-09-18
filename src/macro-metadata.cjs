@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { app } = require('electron');
 const draft = require('./macro-draft.js');
+const storeFile = require('./store-file.cjs');
 
 function metadataPath() {
   return path.join(app.getPath('userData'), 'macro-metadata.json');
@@ -24,21 +25,8 @@ function loadMacroMetadata(customPath = null) {
 function saveMacroMetadata(meta, customPath = null) {
   const parsed = draft.parseStoredMetadata(meta);
   const target = customPath || metadataPath();
-  const dir = path.dirname(target);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmp = path.join(dir, `.macro-metadata-${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2)}.tmp`);
-  try {
-    fs.writeFileSync(tmp, draft.serializeMetadata(parsed.meta), 'utf8');
-    fs.renameSync(tmp, target);
-    return parsed.meta;
-  } catch (err) {
-    try {
-      if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-    } catch {
-      // ignore tmp cleanup error
-    }
-    throw err;
-  }
+  storeFile.writeTextFileAtomic(target, draft.serializeMetadata(parsed.meta));
+  return parsed.meta;
 }
 
 /**

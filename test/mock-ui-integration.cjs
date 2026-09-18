@@ -7,8 +7,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const protocol = require('../src/protocol.cjs');
 const transport = require('../src/transport.cjs');
+const firmwareBackup = require('../src/firmware-backup.cjs');
 const lightingCapsExpected = require('./fixtures/g75-lighting-capabilities.json');
 const { buildSimpleGif } = require('./gif-fixture.cjs');
+const mockFw = require('./mock-firmware-io.cjs');
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -214,15 +216,18 @@ async function run({ app, getWindow, getMock }) {
   }
 
   const tokenTitles = await snapshot();
-  assert.equal(tokenTitles.onboardTitles[0], 'Default Onboard');
-  assert.equal(tokenTitles.onboardTitles[1], 'Default Onboard2');
-  assert.equal(tokenTitles.onboardTitles[2], 'Default Onboard3');
+  const defaultOnboard0 = tokenTitles.localeZhActive ? '默认板载' : 'Default Onboard';
+  const defaultOnboard2 = tokenTitles.localeZhActive ? '默认板载2' : 'Default Onboard2';
+  const defaultOnboard3 = tokenTitles.localeZhActive ? '默认板载3' : 'Default Onboard3';
+  assert.equal(tokenTitles.onboardTitles[0], defaultOnboard0);
+  assert.equal(tokenTitles.onboardTitles[1], defaultOnboard2);
+  assert.equal(tokenTitles.onboardTitles[2], defaultOnboard3);
   assert.ok(
     tokenTitles.onboardTitles.every((title) => !String(title).includes('i18n<')),
     'sidebar must not show raw i18n tokens'
   );
-  assert.equal(tokenTitles.editProfileOptions[0], 'Default Onboard');
-  assert.equal(tokenTitles.editProfileOptions[1], 'Default Onboard2');
+  assert.equal(tokenTitles.editProfileOptions[0], defaultOnboard0);
+  assert.equal(tokenTitles.editProfileOptions[1], defaultOnboard2);
   assert.ok(
     tokenTitles.editProfileOptions.every((title) => !String(title).includes('i18n<')),
     'edit dropdown must not show raw i18n tokens'
@@ -231,7 +236,7 @@ async function run({ app, getWindow, getMock }) {
     document.querySelector('[data-action="rename-profile"][data-profile="1"]')?.click()
   `);
   const renameDialog = await waitUntil((s) => s.profileNameDialogHidden === false, 20, 50);
-  assert.equal(renameDialog.profileNameInput, 'Default Onboard2');
+  assert.equal(renameDialog.profileNameInput, defaultOnboard2);
   assert.equal(renameDialog.profileNameInput.includes('i18n<'), false);
   await win.webContents.executeJavaScript('document.getElementById("btn-profile-name-cancel")?.click()');
   await waitUntil((s) => s.profileNameDialogHidden === true, 20, 50);
@@ -242,14 +247,36 @@ async function run({ app, getWindow, getMock }) {
   assert.strictEqual(tabCount, 9, 'nine feature tabs including Advanced and Others');
 
   await win.webContents.executeJavaScript('document.getElementById("lang-zh")?.click()');
-  const zhTabs = await waitUntil((s) => s.tabLightingLabel === '灯光', 20, 50);
+  const zhTabs = await waitUntil((s) => s.tabLightingLabel === '灯光' && s.dashSubtitle === '连接、固件、电量和板载配置。', 20, 50);
   assert.equal(zhTabs.tabLightingLabel, '灯光');
   assert.equal(zhTabs.tabOthersLabel, '其他');
+  assert.equal(zhTabs.dashSubtitle, '连接、固件、电量和板载配置。');
+  assert.equal(zhTabs.keymapSubtitle, '四层：Windows、Windows + Fn、macOS、macOS + Fn。拖拽或点击命令到按键。板载改动自动保存；本机预览只留在这台 Mac。');
+  assert.equal(zhTabs.keymapSelectedTitle, '当前按键');
+  assert.equal(zhTabs.lightingBrightnessLabel, '亮度');
+  assert.equal(zhTabs.factoryResetTitle, '恢复出厂');
+  assert.equal(zhTabs.backupTitle, '备份与配置');
+  // backup.title is 备份与配置 / Backup & Profiles
+  assert.equal(zhTabs.onboardTitles[0], '默认板载');
+  assert.match(zhTabs.profileStatText, /键盘 \d+ · 编辑 \d+/);
   assert.equal(zhTabs.localeZhActive, true);
+  await win.webContents.executeJavaScript('document.getElementById("btn-refresh")?.click()');
+  const zhToast = await waitUntil((s) => s.toast === '已从硬件刷新遥测。', 40, 50);
+  assert.equal(zhToast.toast, '已从硬件刷新遥测。');
   await win.webContents.executeJavaScript('document.getElementById("lang-en")?.click()');
-  const enTabs = await waitUntil((s) => s.tabLightingLabel === 'Lighting', 20, 50);
+  const enTabs = await waitUntil((s) => s.tabLightingLabel === 'Lighting' && s.dashSubtitle.startsWith('Connection, firmware'), 20, 50);
   assert.equal(enTabs.tabLightingLabel, 'Lighting');
+  assert.equal(enTabs.dashSubtitle, 'Connection, firmware, battery, and onboard profiles.');
+  assert.match(enTabs.keymapSubtitle, /Four layers: Windows, Windows \+ Fn, macOS, macOS \+ Fn/);
+  assert.equal(enTabs.keymapSelectedTitle, 'Selected Key');
+  assert.equal(enTabs.lightingBrightnessLabel, 'Brightness');
+  assert.equal(enTabs.factoryResetTitle, 'Factory reset');
+  assert.equal(enTabs.onboardTitles[0], 'Default Onboard');
+  assert.match(enTabs.profileStatText, /HW \d+ · Edit \d+/);
   assert.equal(enTabs.localeEnActive, true);
+  await win.webContents.executeJavaScript('document.getElementById("btn-refresh")?.click()');
+  const enToast = await waitUntil((s) => s.toast === 'Telemetry refreshed from hardware.', 40, 50);
+  assert.equal(enToast.toast, 'Telemetry refreshed from hardware.');
 
   await win.webContents.executeJavaScript(
     'document.querySelector(\'[data-action="set-tab"][data-tab="lighting"]\')?.click()'
@@ -5031,6 +5058,11 @@ async function run({ app, getWindow, getMock }) {
   assert.strictEqual(afterStaleLighting.applyLightingDisabled, true);
 
   console.log('[MockUI] others: firmware review/cancel/confirm');
+  // GET_INFO fixture is already catalog 1.30. Start the mock at 1.29 so the
+  // native IO stamp of 1.30 after a successful transfer is a visible catalog
+  // match; same-version readback is also treated as success after restore.
+  mock.info[2] = 0x29;
+  mock.info[3] = 0x01;
   transport.installTestAdapter(mock);
   await transport.queryStatus();
   await win.webContents.executeJavaScript(
@@ -5049,8 +5081,143 @@ async function run({ app, getWindow, getMock }) {
   assert.doesNotMatch(firmwareHome.firmwareCardText || '', /not available in this build/i);
   assert.match(firmwareHome.firmwareCardText || '', /official package|Review/i);
   assert.match(firmwareHome.firmwareMcuVersion || '', /1\.14/);
-  assert.match(firmwareHome.firmwareRfVersion || '', /1\.30/);
+  assert.match(firmwareHome.firmwareRfVersion || '', /1\.29/);
   assert.match(firmwareHome.firmwareTargetLabel || '', /Receiver|2\.4G/i);
+  assert.strictEqual(firmwareHome.firmwareInterruptedChecked, true, 'firmwareInterruptedStatus must be queried independently of firmwareStatus');
+  assert.strictEqual(firmwareHome.firmwareInterruptedPresent, false, 'startup interrupted-status check must run independently');
+  assert.strictEqual(firmwareHome.firmwareRecoveryHidden, true);
+  assert.strictEqual(firmwareHome.firmwareRecoveryDialogHidden, true);
+
+  console.log('[MockUI] others: interrupted firmware recovery prompt/discard');
+  function writeMockRecoveryAnchor(overrides = {}) {
+    const userData = app.getPath('userData');
+    const catalog = mockFw.createMockUiCatalog();
+    const backupPath = overrides.backupPath !== undefined
+      ? overrides.backupPath
+      : path.join(userData, 'firmware-recovery-backup.json');
+    if (overrides.createBackup !== false && backupPath) {
+      fs.writeFileSync(backupPath, '{"schema":"mock-ui-firmware"}\n');
+    } else if (backupPath && fs.existsSync(backupPath)) {
+      fs.unlinkSync(backupPath);
+    }
+    const identity = firmwareBackup.currentDeviceIdentity(transport);
+    const written = firmwareBackup.writeBootAnchor(firmwareBackup.bootAnchorPath(userData), {
+      schema: firmwareBackup.BOOT_ANCHOR_SCHEMA,
+      version: firmwareBackup.BOOT_ANCHOR_SCHEMA_VERSION,
+      targetKey: 'receiver',
+      locationId: Number.isInteger(identity.locationId) ? identity.locationId : 0x02400000,
+      serialNumber: identity.serialNumber || 'MOCK',
+      packageSha256: overrides.packageSha256 || catalog.receiver.package.sha256,
+      backupPath: backupPath || path.join(userData, 'missing-firmware-recovery-backup.json'),
+      firmwareField: 'rfFirmwareVersion',
+      beforeVersionRaw: mockFw.RECEIVER_INFO_BEFORE.rawRfFirmwareVersion,
+      enteredAt: Date.now()
+    });
+    assert.equal(written.success, true, written.error);
+    return { userData, backupPath, catalog };
+  }
+
+  writeMockRecoveryAnchor();
+  await win.webContents.executeJavaScript(
+    'document.querySelector(\'[data-action="set-tab"][data-tab="dashboard"]\')?.click()'
+  );
+  await sleep(80);
+  await win.webContents.executeJavaScript(
+    'document.querySelector(\'[data-action="set-tab"][data-tab="others"]\')?.click()'
+  );
+  const recoveryPrompt = await waitUntil((s) => s.firmwareRecoveryHidden === false && s.firmwareResumeHidden === false, 40, 50);
+  assert.strictEqual(recoveryPrompt.firmwareInterruptedPresent, true);
+  assert.strictEqual(recoveryPrompt.firmwareInterruptedBackupPresent, true);
+  assert.strictEqual(recoveryPrompt.firmwareRecoveryHidden, false);
+  assert.strictEqual(recoveryPrompt.firmwareResumeHidden, false);
+  assert.match(recoveryPrompt.firmwareRecoveryBody || '', /interrupted while writing/i);
+
+  await win.webContents.executeJavaScript('document.getElementById("lang-zh")?.click()');
+  const zhRecovery = await waitUntil((s) => /写入过程中中断/.test(s.firmwareRecoveryBody || ''), 20, 50);
+  assert.match(zhRecovery.firmwareRecoveryBody || '', /写入过程中中断/);
+  await win.webContents.executeJavaScript('document.getElementById("lang-en")?.click()');
+  await waitUntil((s) => /interrupted while writing/i.test(s.firmwareRecoveryBody || ''), 20, 50);
+
+  await win.webContents.executeJavaScript('document.getElementById("btn-firmware-discard")?.click()');
+  const discardReview = await waitUntil((s) => s.firmwareRecoveryDialogHidden === false, 20, 50);
+  assert.strictEqual(discardReview.firmwareRecoveryDialogHidden, false);
+  assert.match(discardReview.firmwareRecoveryDialogTitle || '', /Discard the interrupted update/i);
+  assert.match(discardReview.firmwareRecoveryDialogBody || '', /recovery record/i);
+  await win.webContents.executeJavaScript('document.getElementById("btn-firmware-recovery-cancel")?.click()');
+  const afterDiscardCancel = await waitUntil((s) => s.firmwareRecoveryDialogHidden === true, 20, 50);
+  assert.strictEqual(afterDiscardCancel.firmwareRecoveryDialogHidden, true);
+  assert.strictEqual(afterDiscardCancel.firmwareRecoveryHidden, false);
+  assert.strictEqual(afterDiscardCancel.activeElementId, 'btn-firmware-discard');
+
+  await win.webContents.executeJavaScript('document.getElementById("btn-firmware-discard")?.click()');
+  await waitUntil((s) => s.firmwareRecoveryDialogHidden === false, 20, 50);
+  await win.webContents.executeJavaScript(`
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  `);
+  const afterDiscardEscape = await waitUntil((s) => s.firmwareRecoveryDialogHidden === true, 20, 50);
+  assert.strictEqual(afterDiscardEscape.firmwareRecoveryDialogHidden, true, 'Escape must close recovery discard');
+  assert.strictEqual(afterDiscardEscape.firmwareRecoveryHidden, false);
+  assert.strictEqual(afterDiscardEscape.firmwareInterruptedPresent, true);
+
+  await win.webContents.executeJavaScript('document.getElementById("btn-firmware-discard")?.click()');
+  await waitUntil((s) => s.firmwareRecoveryDialogHidden === false, 20, 50);
+  await win.webContents.executeJavaScript('document.getElementById("btn-firmware-recovery-confirm")?.click()');
+  const afterDiscard = await waitUntil(
+    (s) => s.firmwareRecoveryDialogHidden === true && s.firmwareRecoveryHidden === true,
+    40,
+    50
+  );
+  assert.strictEqual(afterDiscard.firmwareRecoveryHidden, true);
+  assert.strictEqual(afterDiscard.firmwareInterruptedPresent, false);
+  assert.match(afterDiscard.toast || '', /discarded/i);
+  assert.strictEqual(
+    fs.existsSync(firmwareBackup.bootAnchorPath(app.getPath('userData'))),
+    false,
+    'confirmed discard must remove the boot anchor'
+  );
+
+  writeMockRecoveryAnchor({
+    createBackup: false,
+    backupPath: path.join(app.getPath('userData'), 'missing-firmware-recovery-backup.json')
+  });
+  await win.webContents.executeJavaScript('window.__maicongHarness.refreshInterruptedFirmware()');
+  const noBackupPrompt = await waitUntil(
+    (s) => s.firmwareRecoveryHidden === false && s.firmwareResumeHidden === true,
+    40,
+    50
+  );
+  assert.strictEqual(noBackupPrompt.firmwareInterruptedPresent, true);
+  assert.strictEqual(noBackupPrompt.firmwareInterruptedBackupPresent, false);
+  assert.strictEqual(noBackupPrompt.firmwareResumeHidden, true, 'resume must not be offered without a backup');
+  assert.match(noBackupPrompt.firmwareRecoveryBody || '', /backup is gone/i);
+  await win.webContents.executeJavaScript('document.getElementById("btn-firmware-discard")?.click()');
+  await waitUntil((s) => s.firmwareRecoveryDialogHidden === false, 20, 50);
+  await win.webContents.executeJavaScript('document.getElementById("btn-firmware-recovery-confirm")?.click()');
+  await waitUntil((s) => s.firmwareRecoveryHidden === true, 40, 50);
+
+  // Resume is driven only through package-mismatch: the mock HID stays in
+  // normal mode, so a faithful bootloader reflash cannot be completed here.
+  const mismatchCatalog = mockFw.createMockUiCatalog();
+  writeMockRecoveryAnchor({ packageSha256: mismatchCatalog.keyboard.package.sha256 });
+  await win.webContents.executeJavaScript('window.__maicongHarness.refreshInterruptedFirmware()');
+  await waitUntil((s) => s.firmwareRecoveryHidden === false && s.firmwareResumeHidden === false, 40, 50);
+  await win.webContents.executeJavaScript('window.__maicongHarness.resumeInterruptedFirmware()');
+  const resumeReview = await waitUntil((s) => s.firmwareRecoveryDialogHidden === false && s.firmwareRecoveryDialogMode === 'resume', 40, 50);
+  assert.strictEqual(resumeReview.firmwareRecoveryDialogMode, 'resume');
+  assert.match(resumeReview.firmwareRecoveryDialogTitle || '', /Resume the interrupted firmware update/i);
+  await win.webContents.executeJavaScript('document.getElementById("btn-firmware-recovery-confirm")?.click()');
+  const mismatchReview = await waitUntil((s) => s.firmwareRecoveryDialogMode === 'mismatch', 40, 50);
+  assert.strictEqual(mismatchReview.firmwareRecoveryDialogMode, 'mismatch');
+  assert.match(mismatchReview.firmwareRecoveryDialogTitle || '', /does not match the interrupted update/i);
+  assert.match(mismatchReview.firmwareRecoveryDialogBody || '', /different package/i);
+  assert.match(mismatchReview.firmwareRecoveryDialogConfirm || '', /anyway/i);
+  assert.strictEqual(mismatchReview.firmwareInterruptedPresent, true, 'mismatch must not discard the anchor');
+  await win.webContents.executeJavaScript('document.getElementById("btn-firmware-recovery-cancel")?.click()');
+  await waitUntil((s) => s.firmwareRecoveryDialogHidden === true, 20, 50);
+  await win.webContents.executeJavaScript('document.getElementById("btn-firmware-discard")?.click()');
+  await waitUntil((s) => s.firmwareRecoveryDialogHidden === false, 20, 50);
+  await win.webContents.executeJavaScript('document.getElementById("btn-firmware-recovery-confirm")?.click()');
+  await waitUntil((s) => s.firmwareRecoveryHidden === true, 40, 50);
 
   mock.writtenBuffers.length = 0;
   await win.webContents.executeJavaScript('document.getElementById("btn-firmware-choose")?.click()');

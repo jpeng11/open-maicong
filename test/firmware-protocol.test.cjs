@@ -107,6 +107,11 @@ describe('G75 V2 firmware catalog version matching', () => {
     assert.equal(firmware.catalogVersionMatchesRaw(0x0130, firmware.OFFICIAL_CATALOG.receiver.package), true);
     assert.equal(firmware.catalogVersionMatchesRaw(0x0115, firmware.OFFICIAL_CATALOG.keyboard.package), false);
     assert.equal(firmware.catalogVersionMatchesRaw(100, { versionNumber: 100, version: 'fixture' }), true);
+    // The pinned wire value is unambiguous: neither decimal 114 nor a raw
+    // 0x0072 reading ("0.72") may satisfy the keyboard package gate.
+    assert.equal(firmware.catalogVersionMatchesRaw(114, firmware.OFFICIAL_CATALOG.keyboard.package), false);
+    assert.equal(firmware.catalogVersionMatchesRaw(0x0072, firmware.OFFICIAL_CATALOG.keyboard.package), false);
+    assert.equal(firmware.catalogVersionMatchesRaw(0x0114, { versionNumber: 114, version: '1.14' }), false);
   });
 });
 
@@ -160,6 +165,7 @@ describe('G75 V2 firmware flag responses and package validation', () => {
       transport: undefined,
       version: 'fixture-version',
       versionNumber: undefined,
+      versionRaw: null,
       versionSource: 'fixture',
       fileName: 'fixture.bin',
       size: fixture.length,

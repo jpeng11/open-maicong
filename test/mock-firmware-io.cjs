@@ -44,6 +44,7 @@ function createMockUiCatalog() {
         sha256: sha256(KEYBOARD_BYTES),
         version: '1.14',
         versionNumber: 114,
+        versionRaw: 0x0114,
         versionSource: 'mock-ui-catalog',
         firmwareField: 'firmwareVersion'
       }
@@ -56,6 +57,7 @@ function createMockUiCatalog() {
         sha256: sha256(RECEIVER_BYTES),
         version: '1.30',
         versionNumber: 130,
+        versionRaw: 0x0130,
         versionSource: 'mock-ui-catalog',
         firmwareField: 'rfFirmwareVersion'
       }
@@ -204,7 +206,19 @@ class MockNativeFirmwareIo {
   }
 
   async waitForIdentity(request) {
+    if (typeof this.options.identityPlan === 'function') {
+      return this.options.identityPlan(request, this);
+    }
     if (request.phase === 'boot-confirmation') {
+      const count = this.options.bootCandidates;
+      if (count === 0) return [];
+      if (Number.isInteger(count) && count > 1) {
+        const candidates = [];
+        for (let i = 0; i < count; i += 1) {
+          candidates.push({ ...this.bootIdentity, path: `${this.bootIdentity.path}-${i}` });
+        }
+        return candidates;
+      }
       this._attach(this.bootIdentity);
       return this.getIdentity();
     }
@@ -233,7 +247,10 @@ class MockNativeFirmwareIo {
     }
     setImmediate(() => {
       this._emitData(firmware.buildFlagResponse(0));
-      if (meta.phase === 'success') this._detach();
+      if (meta.phase === 'success') {
+        if (typeof this.options.onFlashed === 'function') this.options.onFlashed(this);
+        this._detach();
+      }
     });
     return { dispatched: true };
   }
@@ -326,6 +343,20 @@ class MockSessionTransport {
     if (ownerToken !== this.owner) return { success: false, error: 'owner mismatch' };
     this.device = null;
     return { success: true, disconnected: true };
+  }
+
+  connect(targetPath = null, options = {}) {
+    const ownerToken = options && options.firmwareOwner ? options.firmwareOwner : null;
+    this.calls.push({ kind: 'connect', path: targetPath, owner: ownerToken === this.owner });
+    if (this.owner && ownerToken !== this.owner) {
+      return { success: false, error: 'Firmware updater owns the device transport', updaterOwned: true };
+    }
+    this.reconnected = true;
+    this.device = {};
+    this.deviceInfo = { ...this._returnedIdentity };
+    this.lastState.device = { ...this._returnedIdentity };
+    this.lastState.connected = true;
+    return { success: true, device: { ...this._returnedIdentity } };
   }
 
   async connectFirmwareNormal(identity, ownerToken) {

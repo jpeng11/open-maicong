@@ -141,7 +141,7 @@ This matrix distinguishes between features **verified through live readback on p
 
 ```bash
 # From the project directory
-npm install
+npm ci
 
 # Run automated tests (unit, schema, layout geometry, & adversarial mock tests)
 npm test
@@ -156,6 +156,8 @@ npm run smoke
 npm start
 ```
 
+`package-lock.json` is the install contract. `npm ci` is what makes it binding; `npm install` treats the lockfile as advisory and can resolve a newer `node-hid` within whatever range `package.json` declares. That module performs every HID write and runs install scripts, so a floating install on a contributor or release machine can change the writer unnoticed.
+
 ### Packaging for macOS
 
 Unsigned Apple Silicon `.dmg` and `.zip` are produced with electron-builder (`build.mac.identity` is `null`). The packaged app has been opened and read-verified; it is not Apple-signed.
@@ -168,7 +170,7 @@ npm run icon
 
 rsync -a --exclude /dist/ --exclude /test-artifacts/ ./ /path/to/space-free-staging/
 cd /path/to/space-free-staging
-npm install
+npm ci
 npm run pack    # .app
 npm run dist    # DMG and ZIP
 ```
@@ -189,8 +191,8 @@ To ship a new version:
 
 1. Bump `version` in `package.json`.
 2. `npm run dist` (space-free staging path if needed).
-3. `shasum -a 256 dist/Maicong-Studio-<version>-arm64.dmg`
-4. Create GitHub release `v<version>` and upload that DMG (same filename).
+3. `shasum -a 256 dist/Maicong-Studio-<version>-arm64.dmg` (or read the tag-push Release workflow log). `node scripts/verify-cask.cjs` fails if `Casks/maicong-studio.rb` version/url/sha256 do not match that DMG; it does not update the tap.
+4. Create GitHub release `v<version>` and upload that DMG (same filename). The published asset must be the file whose hash is in the cask; a later rebuild will not match.
 5. Set `version` and `sha256` in `Casks/maicong-studio.rb` and in the tap cask.
 6. Commit and push both repositories.
 

@@ -13,7 +13,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const crypto = require('node:crypto');
+const { writeFileAtomicDurable } = require('./store-file.cjs');
 
 const protocol = require('./protocol.cjs');
 const firmwareIdentity = require('./firmware-protocol.cjs');
@@ -191,7 +191,8 @@ function identityForStorage(identity) {
     usage: identity.usage,
     serialNumber: identity.serialNumber || null,
     path: identity.path || null,
-    locationId: identity.locationId || null,
+    // LocationID 0 is a valid stable topology anchor; only absence is null.
+    locationId: identity.locationId != null ? identity.locationId : null,
     registryEntryId: identity.registryEntryId || null,
     registryPath: identity.registryPath || null
   };
@@ -569,9 +570,23 @@ function migrateKeyExtras(captured, current) {
   return out;
 }
 
-function migrateAdvancedTable(captured, current, references, entrySize, reservedOffset) {
+function migrateAdvancedTable(captured, current, references, entrySize, reservedOffset, tableSize) {
+  if (!Number.isInteger(entrySize) || entrySize <= 0
+    || !Number.isInteger(reservedOffset) || reservedOffset <= 0 || reservedOffset % entrySize !== 0
+    || !Number.isInteger(tableSize) || tableSize < reservedOffset) {
+    throw new FirmwareBackupError('Advanced table geometry is malformed', 'advanced');
+  }
+  if (captured.length !== tableSize || current.length !== tableSize) {
+    throw new FirmwareBackupError(`Advanced table migration requires complete ${tableSize}-byte buffers`, 'advanced');
+  }
+  const entryCount = reservedOffset / entrySize;
   const out = Buffer.from(current);
   for (const index of references) {
+    // A referenced entry beyond the table must fail loudly: Buffer.copy would
+    // otherwise clamp into a silent no-op and drop a binding a key still uses.
+    if (!Number.isInteger(index) || index < 0 || index >= entryCount) {
+      throw new FirmwareBackupError(`Advanced table reference ${index} exceeds the ${entryCount}-entry table`, 'advanced');
+    }
     const offset = index * entrySize;
     captured.copy(out, offset, offset, offset + entrySize);
   }
@@ -633,8 +648,8 @@ function prepareRestorePlans(backup, current, defaults, profileData) {
     const capturedExtras = exactBuffer(captured.advanced.keyExtrasHex, protocol.KEY_EXTRAS_SIZE, `profile-${p}.advanced.key-extras`);
     const targetUsedLayers = layers.map((layer) => layer.subarray(0, protocol.USED_KEY_AREA_SIZE));
     const references = protocol.collectAdvancedReferences(targetUsedLayers);
-    const mt = migrateAdvancedTable(capturedMt, now.mt, references.mt, protocol.MT_ENTRY_SIZE, protocol.MT_RESERVED_OFFSET);
-    const tgl = migrateAdvancedTable(capturedTgl, now.tgl, references.tgl, protocol.TGL_ENTRY_SIZE, protocol.TGL_RESERVED_OFFSET);
+    const mt = migrateAdvancedTable(capturedMt, now.mt, references.mt, protocol.MT_ENTRY_SIZE, protocol.MT_RESERVED_OFFSET, protocol.MT_TABLE_SIZE);
+    const tgl = migrateAdvancedTable(capturedTgl, now.tgl, references.tgl, protocol.TGL_ENTRY_SIZE, protocol.TGL_RESERVED_OFFSET, protocol.TGL_TABLE_SIZE);
     const extras = migrateKeyExtras(capturedExtras, now.extras);
     const customExisting = now.custom;
     const capturedCustomRaw = exactBuffer(captured.advanced.customParamHex, protocol.CB_CUSTOM_PARAM_LENGTH, `profile-${p}.advanced.custom-param`);
@@ -978,33 +993,19 @@ function backupJsonBytes(backup) {
   return bytes;
 }
 
+function isPackageSha256(value) {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+}
+
 function writeFirmwareBackupAtomic(filePath, backup) {
   if (typeof filePath !== 'string' || !filePath) return { success: false, error: 'A backup file path is required' };
   const validated = validateFirmwareBackup(backup);
   if (!validated.valid) return { success: false, error: validated.error, persisted: false };
-  let tempPath = null;
   try {
-    const bytes = backupJsonBytes(backup);
-    const dir = path.dirname(filePath);
-    fs.mkdirSync(dir, { recursive: true });
-    const token = crypto.randomBytes(8).toString('hex');
-    tempPath = path.join(dir, `.${path.basename(filePath)}.${process.pid}.${token}.tmp`);
-    const fd = fs.openSync(tempPath, 'wx', 0o600);
-    try {
-      fs.writeFileSync(fd, bytes);
-      fs.fsyncSync(fd);
-    } finally {
-      fs.closeSync(fd);
-    }
-    fs.renameSync(tempPath, filePath);
-    tempPath = null;
+    writeFileAtomicDurable(filePath, backupJsonBytes(backup));
     return { success: true, persisted: true, filePath };
   } catch (err) {
     return { success: false, error: err.message || String(err), persisted: false };
-  } finally {
-    if (tempPath) {
-      try { fs.unlinkSync(tempPath); } catch {}
-    }
   }
 }
 
@@ -1026,6 +1027,97 @@ function readFirmwareBackup(filePath) {
 function existingBackupRetained(filePath) {
   if (typeof filePath !== 'string' || !filePath) return false;
   try { return fs.statSync(filePath).isFile(); } catch { return false; }
+}
+
+/**
+ * Boot recovery anchor. Persisted immediately before enter-boot is
+ * dispatched so an interrupted update (app crash, power loss, cable pull
+ * while the device sits in bootloader mode) can be resumed after a relaunch.
+ * The anchor is the pre-flight identity proof: target key, stable USB
+ * location, serial (when the normal descriptor exposed one), and the package
+ * SHA-256 it was written for. It lives next to the backup file and uses the
+ * same durable-write discipline because it gates destructive boot commands.
+ */
+const BOOT_ANCHOR_SCHEMA = 'g75v2-boot-anchor';
+const BOOT_ANCHOR_SCHEMA_VERSION = 1;
+const MAX_BOOT_ANCHOR_BYTES = 16 * 1024;
+
+function bootAnchorPath(dir) {
+  if (typeof dir !== 'string' || !dir) return null;
+  return path.join(dir, 'firmware-boot-anchor.json');
+}
+
+function validateBootAnchor(anchor) {
+  try {
+    if (!isPlainObject(anchor)) throw new FirmwareBackupError('Boot anchor must be a plain object', 'anchor');
+    if (anchor.schema !== BOOT_ANCHOR_SCHEMA) throw new FirmwareBackupError('Boot anchor schema is not recognized', 'anchor');
+    if (anchor.version !== BOOT_ANCHOR_SCHEMA_VERSION) throw new FirmwareBackupError('Boot anchor schema version is not supported', 'anchor');
+    if (typeof anchor.targetKey !== 'string' || !anchor.targetKey) throw new FirmwareBackupError('Boot anchor target key is missing', 'anchor');
+    if (!Number.isInteger(anchor.locationId) || anchor.locationId < 0) throw new FirmwareBackupError('Boot anchor lacks a stable USB location', 'anchor');
+    if (anchor.serialNumber !== null && typeof anchor.serialNumber !== 'string') throw new FirmwareBackupError('Boot anchor serial is malformed', 'anchor');
+    if (!isPackageSha256(anchor.packageSha256)) {
+      throw new FirmwareBackupError('Boot anchor package SHA-256 is missing or malformed', 'anchor');
+    }
+    if (anchor.backupPath !== null && typeof anchor.backupPath !== 'string') throw new FirmwareBackupError('Boot anchor backup path is malformed', 'anchor');
+    if (anchor.firmwareField !== null && typeof anchor.firmwareField !== 'string') throw new FirmwareBackupError('Boot anchor firmware field is malformed', 'anchor');
+    if (anchor.beforeVersionRaw !== null && (!Number.isInteger(anchor.beforeVersionRaw) || anchor.beforeVersionRaw < 0)) {
+      throw new FirmwareBackupError('Boot anchor pre-update version is malformed', 'anchor');
+    }
+    finiteTimestamp(anchor.enteredAt, 'anchor.enteredAt');
+    return { valid: true, value: anchor };
+  } catch (err) {
+    return { valid: false, error: err.message || String(err), section: err.section || null };
+  }
+}
+
+function writeBootAnchor(filePath, anchor) {
+  if (typeof filePath !== 'string' || !filePath) return { success: false, error: 'A boot anchor file path is required' };
+  const validated = validateBootAnchor(anchor);
+  if (!validated.valid) return { success: false, error: validated.error, persisted: false };
+  try {
+    const bytes = Buffer.from(`${JSON.stringify(anchor, null, 2)}\n`, 'utf8');
+    if (bytes.length > MAX_BOOT_ANCHOR_BYTES) throw new FirmwareBackupError('Boot anchor exceeds the safety size limit', 'anchor');
+    writeFileAtomicDurable(filePath, bytes);
+    return { success: true, persisted: true, filePath };
+  } catch (err) {
+    return { success: false, error: err.message || String(err), persisted: false };
+  }
+}
+
+function readBootAnchor(filePath) {
+  if (typeof filePath !== 'string' || !filePath) return { success: false, error: 'A boot anchor file path is required' };
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile() || stat.size > MAX_BOOT_ANCHOR_BYTES) return { success: false, error: 'Boot anchor file is not a regular file or exceeds the safety limit' };
+    const value = JSON.parse(fs.readFileSync(filePath).toString('utf8'));
+    const validated = validateBootAnchor(value);
+    if (!validated.valid) return { success: false, error: validated.error, retained: true };
+    return { success: true, anchor: value, filePath };
+  } catch (err) {
+    return { success: false, error: err.message || String(err), missing: Boolean(err && err.code === 'ENOENT') };
+  }
+}
+
+function clearBootAnchor(filePath) {
+  if (typeof filePath !== 'string' || !filePath) return { success: false, error: 'A boot anchor file path is required' };
+  try {
+    fs.unlinkSync(filePath);
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return { success: true, cleared: false, filePath };
+    return { success: false, error: err.message || String(err) };
+  }
+  // The removal's directory entry needs the same durable commit as the rename.
+  try {
+    const dirFd = fs.openSync(path.dirname(filePath), 'r');
+    try {
+      fs.fsyncSync(dirFd);
+    } finally {
+      fs.closeSync(dirFd);
+    }
+  } catch (err) {
+    return { success: false, error: err.message || String(err) };
+  }
+  return { success: true, cleared: true, filePath };
 }
 
 async function captureFirmwareBackup(transport, options = {}) {
@@ -1161,6 +1253,8 @@ module.exports = {
   BACKUP_SCHEMA_VERSION,
   BACKUP_DATA_FORMAT,
   MAX_BACKUP_BYTES,
+  BOOT_ANCHOR_SCHEMA,
+  BOOT_ANCHOR_SCHEMA_VERSION,
   NORMAL_VENDOR_ID,
   NORMAL_PRODUCT_IDS,
   currentDeviceIdentity,
@@ -1169,6 +1263,12 @@ module.exports = {
   validateFirmwareBackup,
   writeFirmwareBackupAtomic,
   readFirmwareBackup,
+  bootAnchorPath,
+  validateBootAnchor,
+  isPackageSha256,
+  writeBootAnchor,
+  readBootAnchor,
+  clearBootAnchor,
   captureFirmwareBackup,
   restoreFirmwareBackup,
   FirmwareBackupError

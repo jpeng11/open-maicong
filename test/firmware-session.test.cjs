@@ -1,11 +1,13 @@
 'use strict';
 
-const { test, describe } = require('node:test');
+const { test, describe, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
 const firmware = require('../src/firmware-protocol.cjs');
+const firmwareBackup = require('../src/firmware-backup.cjs');
 const native = require('../src/firmware-native.cjs');
 const transport = require('../src/transport.cjs');
 const { FirmwareSession } = require('../src/firmware-session.cjs');
@@ -14,11 +16,13 @@ const {
   KEYBOARD_BYTES,
   RECEIVER_BYTES,
   MISMATCH_BYTES,
+  RECEIVER_INFO_BEFORE,
   RECEIVER_INFO_AFTER,
   KEYBOARD_INFO_BEFORE,
   KEYBOARD_INFO_AFTER,
   createMockUiCatalog,
   keyboardIdentity,
+  receiverIdentity,
   nodeHidReceiverHandle,
   createSessionDoubles
 } = require('./mock-firmware-io.cjs');
@@ -29,22 +33,52 @@ function backupPath(name) {
 
 function makeSession(options = {}) {
   const doubles = createSessionDoubles(options);
+  const catalog = options.catalog || doubles.catalog;
   const session = new FirmwareSession({
     transport: doubles.transport,
-    catalog: doubles.catalog,
+    catalog,
     nativeIoFactory: doubles.nativeIoFactory,
-    backupDir: os.tmpdir(),
+    backupDir: options.backupDir || os.tmpdir(),
     timeouts: { dispatchMs: 40, flagMs: 40, identityMs: 40 }
   });
   return { session, ...doubles };
 }
 
+function writeSessionAnchor(dir, overrides = {}) {
+  const catalog = createMockUiCatalog();
+  const identity = receiverIdentity();
+  const backupPath = overrides.backupPath || path.join(dir, 'backup.json');
+  if (overrides.createBackup !== false) {
+    fs.writeFileSync(backupPath, '{"schema":"fixture-backup"}\n');
+  }
+  const anchorPath = firmwareBackup.bootAnchorPath(dir);
+  const written = firmwareBackup.writeBootAnchor(anchorPath, {
+    schema: firmwareBackup.BOOT_ANCHOR_SCHEMA,
+    version: firmwareBackup.BOOT_ANCHOR_SCHEMA_VERSION,
+    targetKey: 'receiver',
+    locationId: identity.locationId,
+    serialNumber: identity.serialNumber,
+    packageSha256: catalog.receiver.package.sha256,
+    backupPath,
+    firmwareField: 'rfFirmwareVersion',
+    beforeVersionRaw: RECEIVER_INFO_BEFORE.rawRfFirmwareVersion,
+    enteredAt: Date.now(),
+    ...overrides.anchor
+  });
+  assert.equal(written.success, true, written.error);
+  return { backupPath, anchorPath };
+}
+
 describe('firmware catalog version matching', () => {
-  test('accepts vendor fwVersion114 as wire 0x0114 and raw equality used by fixtures', () => {
-    assert.equal(firmware.catalogVersionMatchesRaw(0x0114, { version: '1.14', versionNumber: 114 }), true);
-    assert.equal(firmware.catalogVersionMatchesRaw(0x0130, { version: '1.30', versionNumber: 130 }), true);
+  test('accepts only the pinned wire versionRaw, never a decimal reading of it', () => {
+    assert.equal(firmware.catalogVersionMatchesRaw(0x0114, { version: '1.14', versionNumber: 114, versionRaw: 0x0114 }), true);
+    assert.equal(firmware.catalogVersionMatchesRaw(0x0130, { version: '1.30', versionNumber: 130, versionRaw: 0x0130 }), true);
     assert.equal(firmware.catalogVersionMatchesRaw(100, { version: 'fixture-1.0', versionNumber: 100 }), true);
-    assert.equal(firmware.catalogVersionMatchesRaw(0x0115, { version: '1.14', versionNumber: 114 }), false);
+    assert.equal(firmware.catalogVersionMatchesRaw(0x0115, { version: '1.14', versionNumber: 114, versionRaw: 0x0114 }), false);
+    // Decimal 114 and raw 0x0072 (displayed "0.72") must not satisfy a gate
+    // for catalog version 1.14 (wire 0x0114).
+    assert.equal(firmware.catalogVersionMatchesRaw(114, { version: '1.14', versionNumber: 114, versionRaw: 0x0114 }), false);
+    assert.equal(firmware.catalogVersionMatchesRaw(0x0072, { version: '1.14', versionNumber: 114, versionRaw: 0x0114 }), false);
   });
 });
 
@@ -254,5 +288,147 @@ describe('shipped firmware session review/start/cancel', () => {
       transport.topologyProcessRunner = null;
       transport.disconnect();
     }
+  });
+});
+
+describe('interrupted firmware session resume/status/discard', () => {
+  let tempDirs = [];
+
+  function tempDir() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maicong-session-recovery-'));
+    tempDirs.push(dir);
+    return dir;
+  }
+
+  afterEach(() => {
+    for (const dir of tempDirs) {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
+    tempDirs = [];
+  });
+
+  test('interruptedUpdateStatus reports present vs absent independently of session.status()', () => {
+    const dir = tempDir();
+    const { session, transport: sessionTransport } = makeSession({ backupDir: dir });
+    sessionTransport.lastState.connected = false;
+    sessionTransport.lastState.device = null;
+    sessionTransport.firmwareTopologyIdentity = null;
+
+    const absent = session.interruptedUpdateStatus();
+    assert.equal(absent.success, true, absent.error);
+    assert.equal(absent.present, false);
+    assert.equal(absent.missing, true);
+    assert.equal(session.status().connected, false);
+
+    const { anchorPath } = writeSessionAnchor(dir);
+    const present = session.interruptedUpdateStatus();
+    assert.equal(present.success, true, present.error);
+    assert.equal(present.present, true);
+    assert.equal(present.anchor.targetKey, 'receiver');
+    assert.equal(present.backupPresent, true);
+    assert.equal(present.filePath, anchorPath);
+    assert.equal(session.status().connected, false);
+
+    const discarded = session.discardInterruptedUpdate();
+    assert.equal(discarded.success, true, discarded.error);
+    assert.equal(discarded.cleared, true);
+    assert.equal(session.interruptedUpdateStatus().present, false);
+
+    const again = session.discardInterruptedUpdate();
+    assert.equal(again.success, true, again.error);
+    assert.equal(again.cleared, false);
+  });
+
+  test('unconfirmed resume is rejected and sends zero writes', async () => {
+    const dir = tempDir();
+    writeSessionAnchor(dir);
+    const { session, getNative } = makeSession({ backupDir: dir });
+    const denied = await session.resumeInterruptedUpdate({ packageBytes: RECEIVER_BYTES });
+    assert.equal(denied.success, false);
+    assert.equal(denied.fullUpdaterSuccess, false);
+    assert.equal(denied.reason, 'confirmation-required');
+    assert.equal(denied.nativeWriteCount, 0);
+    assert.equal(getNative(), null);
+    assert.equal(session.interruptedUpdateStatus().present, true);
+  });
+
+  test('resume requires package bytes when none are selected or supplied', async () => {
+    const dir = tempDir();
+    writeSessionAnchor(dir);
+    const { session, getNative } = makeSession({ backupDir: dir });
+    const missing = await session.resumeInterruptedUpdate({ confirmed: true });
+    assert.equal(missing.success, false);
+    assert.equal(missing.reason, 'invalid-package');
+    assert.equal(missing.nativeWriteCount, 0);
+    assert.equal(getNative(), null);
+  });
+
+  test('resume prefers explicit packageBytes over the selected package', async () => {
+    const dir = tempDir();
+    writeSessionAnchor(dir);
+    const { session, getNative } = makeSession({ backupDir: dir });
+    session.selectPackageFromBytes(MISMATCH_BYTES);
+    const result = await session.resumeInterruptedUpdate({
+      confirmed: true,
+      packageBytes: RECEIVER_BYTES
+    });
+    assert.equal(result.success, true, result.error);
+    assert.equal(result.resumedFromBoot, true);
+    assert.equal(result.fullUpdaterSuccess, true);
+    assert.ok(result.nativeWriteCount > 0);
+    assert.equal(session.nativeWritePhases().includes('erase'), true);
+    assert.deepEqual(getNative().writes.map((write) => write.meta.phase), [
+      'erase', 'write', 'write', 'verify', 'verify', 'end', 'success'
+    ]);
+  });
+
+  test('resume uses the already-selected package when packageBytes are omitted', async () => {
+    const dir = tempDir();
+    writeSessionAnchor(dir);
+    const { session } = makeSession({ backupDir: dir });
+    const selected = session.selectPackageFromBytes(RECEIVER_BYTES);
+    assert.equal(selected.success, true);
+    const result = await session.resumeInterruptedUpdate({ confirmation: true });
+    assert.equal(result.success, true, result.error);
+    assert.equal(result.resumedFromBoot, true);
+    assert.equal(result.bootAnchorCleared, true);
+  });
+
+  test('resume loads package bytes from filePath when nothing is selected', async () => {
+    const dir = tempDir();
+    writeSessionAnchor(dir);
+    const { session } = makeSession({ backupDir: dir });
+    const filePath = path.join(dir, 'receiver.bin');
+    fs.writeFileSync(filePath, RECEIVER_BYTES);
+    const result = await session.resumeInterruptedUpdate({ confirm: true, filePath });
+    assert.equal(result.success, true, result.error);
+    assert.equal(result.resumedFromBoot, true);
+    assert.equal(session.status().selectedPackage.filePath, filePath);
+  });
+
+  test('discardInterruptedUpdate is busy-gated while resume is in flight', async () => {
+    const dir = tempDir();
+    const { anchorPath } = writeSessionAnchor(dir);
+    const { session, getNative } = makeSession({ backupDir: dir, holdPhase: 'erase' });
+    const running = session.resumeInterruptedUpdate({
+      confirmed: true,
+      packageBytes: RECEIVER_BYTES
+    });
+    await new Promise((resolve) => {
+      const poll = () => (getNative() && getNative().writes.some((write) => write.meta.phase === 'erase')
+        ? resolve()
+        : setImmediate(poll));
+      poll();
+    });
+    assert.equal(session.isUpdateInFlight(), true);
+    const busy = session.discardInterruptedUpdate();
+    assert.equal(busy.success, false);
+    assert.equal(busy.reason, 'busy');
+    assert.equal(fs.existsSync(anchorPath), true);
+    getNative().releaseHeldWrite();
+    const result = await running;
+    assert.equal(result.success, true, result.error);
+    assert.equal(session.isUpdateInFlight(), false);
+    assert.equal(fs.existsSync(anchorPath), false);
   });
 });

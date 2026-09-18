@@ -1,0 +1,69 @@
+# Tag-push build for the arm64 cask artifact. Prints filename + sha256
+# and fails if Casks/maicong-studio.rb does not match this build.
+# Does not push jpeng11/homebrew-open-maicong.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install from lockfile
+        run: npm ci
+
+      - name: Build unsigned DMG and ZIP
+        run: npm run icon && npx --no-install electron-builder --mac dmg zip
+
+      - name: Surface cask filename and sha256
+        if: always()
+        run: |
+          set -euo pipefail
+          if [[ ! -d dist ]]; then
+            echo "dist/ was not produced"
+            exit 1
+          fi
+          shopt -s nullglob
+          artifacts=(dist/Maicong-Studio-*-arm64.dmg)
+          if [[ ${#artifacts[@]} -ne 1 ]]; then
+            echo "expected exactly one arm64 DMG, found ${#artifacts[@]}"
+            ls -la dist
+            exit 1
+          fi
+          file="${artifacts[0]}"
+          name="$(basename "$file")"
+          hash="$(shasum -a 256 "$file" | awk '{print $1}')"
+          echo "cask url filename: ${name}"
+          echo "cask sha256: ${hash}"
+          echo "package.json version: $(node -p 'require("./package.json").version')"
+
+      - name: Verify Homebrew cask against this build
+        run: node scripts/verify-cask.cjs
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Maicong-Studio-macos-arm64
+          if-no-files-found: warn
+          path: |
+            dist/Maicong-Studio-*-arm64.dmg
+            dist/Maicong-Studio-*-arm64.zip

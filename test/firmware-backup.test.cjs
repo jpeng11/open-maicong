@@ -323,3 +323,23 @@ test('atomic backup retention and partial restore reporting remain honest after 
   const persisted = JSON.parse(fs.readFileSync(filePath, 'utf8'));
   assert.equal(persisted.restoration.status, 'captured');
 });
+
+test('restore fails loudly when a captured key references an advanced table entry beyond the table', async () => {
+  const mock = new MockGlwMemoryDevice();
+  seedMetadata(mock);
+  setReorderedBase(mock);
+  const identity = attachMock(mock);
+
+  // MT/TGL tables hold 32 entries each; a captured Mod-Tap binding to entry
+  // 200 must not be silently clamped into a dropped binding.
+  mock.pokeUserKey(2, 0, 5, [146, 200, 0]);
+  const filePath = tempFile();
+  const captured = await transport.backupFirmwareConfiguration({ filePath, identity });
+  assert.equal(captured.success, true, captured.error);
+
+  mock.writtenBuffers = [];
+  const result = await transport.restoreFirmwareConfiguration(captured.backup, { filePath, identity });
+  assert.equal(result.success, false);
+  assert.match(result.error, /advanced table reference 200/i);
+  assert.equal(writeCommands(mock).length, 0, 'a dropped binding must fail before any restore write');
+});
