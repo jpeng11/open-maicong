@@ -42,6 +42,8 @@ const isDevHarness = (smoke || mockUiTest) && !app.isPackaged;
 const isDev = !app.isPackaged && !smoke && !mockUiTest;
 if (smoke || mockUiTest) {
   app.setPath('userData', path.join(app.getPath('temp'), `maicong-harness-${process.pid}`));
+} else if (isDev) {
+  app.setPath('userData', path.join(app.getPath('appData'), 'open-maicong-dev'));
 }
 
 function getCompleteState() {
@@ -142,7 +144,7 @@ function readFrontmostApp() {
 
 function createWindow() {
   win = new BrowserWindow({
-    title: 'Maicong Studio',
+    title: isDev ? 'Maicong Studio (Dev)' : 'Maicong Studio',
     width: 1320,
     height: 900,
     minWidth: 1080,
