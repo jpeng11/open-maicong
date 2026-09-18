@@ -114,13 +114,17 @@
     <section class="workspace" aria-label="Editor workspace">
       <nav class="workspace-tabs" aria-label="Feature navigation">
         <div class="view-tabs" role="tablist">
-          <button id="tab-lighting" class="tab" role="tab" aria-selected="false" aria-controls="panel-lighting" tabindex="-1" data-action="set-tab" data-tab="lighting">
-            <svg class="line-icon lg"><use href="#i-sun"/></svg>
-            <span class="tab-label" data-i18n="tab.lighting">Lighting</span>
+          <button id="tab-dashboard" class="tab active" role="tab" aria-selected="true" aria-controls="panel-dashboard" tabindex="0" data-action="set-tab" data-tab="dashboard">
+            <svg class="line-icon lg"><use href="#i-grid"/></svg>
+            <span class="tab-label" data-i18n="tab.overview">Overview</span>
           </button>
           <button id="tab-keymap" class="tab" role="tab" aria-selected="false" aria-controls="panel-keymap" tabindex="-1" data-action="set-tab" data-tab="keymap">
             <svg class="line-icon lg"><use href="#i-keyboard"/></svg>
             <span class="tab-label" data-i18n="tab.keymap">Key settings</span>
+          </button>
+          <button id="tab-lighting" class="tab" role="tab" aria-selected="false" aria-controls="panel-lighting" tabindex="-1" data-action="set-tab" data-tab="lighting">
+            <svg class="line-icon lg"><use href="#i-sun"/></svg>
+            <span class="tab-label" data-i18n="tab.lighting">Lighting</span>
           </button>
           <button id="tab-advanced" class="tab" role="tab" aria-selected="false" aria-controls="panel-advanced" tabindex="-1" data-action="set-tab" data-tab="advanced">
             <svg class="line-icon lg"><use href="#i-layers"/></svg>
@@ -133,10 +137,6 @@
           <button id="tab-macros" class="tab" role="tab" aria-selected="false" aria-controls="panel-macros" tabindex="-1" data-action="set-tab" data-tab="macros">
             <svg class="line-icon lg"><use href="#i-list"/></svg>
             <span class="tab-label" data-i18n="tab.macros">Macros</span>
-          </button>
-          <button id="tab-dashboard" class="tab tab-secondary active" role="tab" aria-selected="true" aria-controls="panel-dashboard" tabindex="0" data-action="set-tab" data-tab="dashboard">
-            <svg class="line-icon lg"><use href="#i-grid"/></svg>
-            <span class="tab-label" data-i18n="tab.overview">Overview</span>
           </button>
           <button id="tab-profiles" class="tab tab-secondary" role="tab" aria-selected="false" aria-controls="panel-profiles" tabindex="-1" data-action="set-tab" data-tab="profiles">
             <svg class="line-icon lg"><use href="#i-box"/></svg>

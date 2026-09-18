@@ -1051,6 +1051,18 @@ button.kb-key.compact-label .key-label {
   letter-spacing: -0.02em;
 }
 
+.kb-key.key-remapped::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--theme-color);
+  pointer-events: none;
+}
+
 .key-color-dot {
   width: 6px;
   height: 6px;
@@ -2442,4 +2454,170 @@ label {
   .panel-header { margin-bottom: 8px; }
   .lighting-workspace { max-height: 270px; }
   .advanced-hub-grid { max-height: 290px; }
+}
+
+/* macOS Native Dark Theme Support */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --mc-w1: #f0f2f5;
+    --mc-w2: rgba(240, 242, 245, 0.6);
+    --mc-w3: #2d3139;
+    --mc-w6: #1e2025;
+    --mc-w7: #16171b;
+    --mc-w11: #1e2026;
+    --mc-w17: #262931;
+    --mc-w26: #131417;
+    --mc-w29: #181a1f;
+    --mc-w30: #21242b;
+    --mc-w34: #1c3664;
+    --mc-w37: #3b82f6;
+    --mc-w37-rgb: 59, 130, 246;
+    --mc-shadow: 0 4px 14px 0 rgba(0, 0, 0, 0.35);
+
+    --web-bg: #111215;
+    --workspace-bg: #181a1f;
+    --card-inset: #1f2127;
+    --keycap-bg: #282b33;
+    --keyboard-bg: #141518;
+    --text-primary: #f0f2f5;
+    --text-secondary: rgba(240, 242, 245, 0.65);
+    --text-muted: #8c92a0;
+    --border-subtle: #2d313b;
+    --border-strong: #404654;
+    --theme-color: #3b82f6;
+    --accent-cyan: #38bdf8;
+    --accent-cyan-bg: rgba(56, 189, 248, 0.15);
+    --accent-green: #34d399;
+    --accent-green-bg: rgba(52, 211, 153, 0.15);
+    --accent-blue: #3b82f6;
+    --accent-amber: #fbbf24;
+    --accent-amber-bg: rgba(251, 191, 36, 0.15);
+    --accent-red: #f87171;
+    --accent-red-bg: rgba(248, 113, 113, 0.15);
+    --bg-main: #111215;
+    --bg-surface: #1e2026;
+    --bg-card: #22252c;
+    --bg-card-hover: #292c35;
+    --bg-input: #1b1d22;
+  }
+
+  .profile-card,
+  .nav-btn,
+  .action-btn,
+  .form-select,
+  .form-input,
+  .effect-tile,
+  .palette-key-btn,
+  .palette-cat-btn,
+  .key-preview-box,
+  .scope-tab,
+  .macro-slot-btn,
+  .rate-radio span,
+  .toggle-btn.active,
+  .toggle-btn[aria-pressed="true"],
+  .toast-banner {
+    background: #24272f;
+    color: var(--text-primary);
+  }
+
+  .nav-btn,
+  .action-btn {
+    background: #24272f;
+    border-color: #343844;
+  }
+
+  .action-btn.primary {
+    background: var(--theme-color);
+    color: #ffffff;
+    border-color: var(--theme-color);
+  }
+
+  .action-btn.danger-subtle {
+    background: rgba(248, 113, 113, 0.15);
+    border-color: rgba(248, 113, 113, 0.35);
+    color: #f87171;
+  }
+
+  .action-btn.warning-subtle {
+    background: rgba(251, 191, 36, 0.15);
+    border-color: rgba(251, 191, 36, 0.3);
+    color: #fbbf24;
+  }
+
+  .keyboard-case {
+    background: linear-gradient(#1e2025, #16171b);
+    border-color: #2e313a;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+
+  .kb-key,
+  button.kb-key {
+    background: linear-gradient(180deg, #2b2e37 0%, #23252c 60%, #1e2025 100%);
+    border-color: #373b47;
+    color: #e5e7eb;
+    box-shadow: 0 1px 0 #18191d, 0 2px 4px rgba(0, 0, 0, 0.3);
+  }
+
+  .kb-key:hover,
+  button.kb-key:hover {
+    border-color: var(--theme-color);
+    background: linear-gradient(180deg, #323640 0%, #292c34 60%, #23252b 100%);
+  }
+
+  .kb-key.selected,
+  button.kb-key.selected {
+    background: #1e3a6a;
+    border-color: var(--theme-color);
+    color: #93c5fd;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
+  }
+
+  .sidebar-edit {
+    background: rgba(24, 26, 31, 0.6);
+  }
+
+  .key-record-capture {
+    background: #1a1b20;
+    border-color: var(--border-subtle);
+  }
+
+  .adv-type-icon {
+    background: #22252c;
+  }
+
+  .adv-binding-keycap,
+  .adv-test-chip {
+    background: #2b2e36;
+    color: #f0f2f5;
+  }
+
+  .battery-gauge-container {
+    background: #2c2f38;
+  }
+
+  .badge-subtle {
+    background: #2c2f38;
+    color: var(--text-secondary);
+  }
+
+  .json-preview {
+    background: #1a1b20;
+    border-color: var(--border-subtle);
+    color: #9ca3af;
+  }
+
+  .capability-notice {
+    background: #22252c;
+    border: 1px solid var(--border-subtle);
+  }
+
+  .lang-switch {
+    background: #24272f;
+    border-color: #343844;
+  }
+
+  .modal-card {
+    background: #22252c;
+    border: 1px solid #343844;
+  }
 }

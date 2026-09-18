@@ -1990,6 +1990,9 @@ function patchKeyButton(keyEl, key, isLightingMode) {
   const selected = key.id === state.selectedKeyId;
   keyEl.classList.toggle('selected', selected);
   keyEl.setAttribute('aria-pressed', selected ? 'true' : 'false');
+  const assigned = state.layerKeymaps[state.activeLayer]?.[key.slot];
+  const isCustomRemapped = !isLightingMode && assigned && (assigned.type !== 16 || assigned.code2 !== key.code);
+  keyEl.classList.toggle('key-remapped', Boolean(isCustomRemapped));
 }
 
 function patchSlotKeyButtons(slot) {
