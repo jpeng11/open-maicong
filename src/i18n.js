@@ -437,7 +437,7 @@
       'palette.lighting': '灯光控制',
       'palette.lightingMain': '主灯控制',
       'palette.lightingSide': '侧灯控制',
-      'palette.extended': '快捷键',
+      'palette.extended': '扩展功能',
       'palette.special': '特殊功能',
       'palette.macroTitle': '宏 {n}（类型：{type}）',
       'light.memoryHintHw': '保存在键盘硬件中。读取成功不代表写入功能已完成实物破坏性测试。',

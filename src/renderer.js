@@ -2256,124 +2256,126 @@ const PALETTE_ZH_LABELS = {
 
 const PALETTE_BUTTON_ICONS = {
   // Mouse
-  'Left mouse button': '◧',
-  'Right mouse button': '◨',
-  'Middle mouse button': '◫',
-  'Mouse forward': '➔',
-  'Mouse backward': '⬅',
-  'Forward button': '➔',
-  'Back button': '⬅',
-  'Wheel up': '▲',
-  'Wheel down': '▼',
+  'Left mouse button': '\ue672',
+  'Right mouse button': '\ue65a',
+  'Middle mouse button': '\ue659',
+  'Mouse forward': '\ue65f',
+  'Mouse backward': '\ue64c',
+  'Forward button': '\ue65f',
+  'Back button': '\ue64c',
+  'Wheel up': '\ue652',
+  'Wheel down': '\ue64a',
 
   // Media
-  'Play / Pause': '⏯',
-  'Play/Pause': '⏯',
-  'Mute': '🔇',
-  'Stop': '⏹',
-  'Prev Track': '⏮',
-  'Previous Track': '⏮',
-  'Next Track': '⏭',
-  'Volume Up': '🔊',
-  'Volume Down': '🔉',
-  'Volume +': '🔊',
-  'Volume -': '🔉',
+  'Play / Pause': '\ue65b',
+  'Play/Pause': '\ue65b',
+  'Mute': '\ue66c',
+  'Stop': '\ue66f',
+  'Prev Track': '\ue66b',
+  'Previous Track': '\ue66b',
+  'Next Track': '\ue662',
+  'Volume Up': '\ue669',
+  'Volume Down': '\ue679',
+  'Volume +': '\ue669',
+  'Volume -': '\ue679',
   'Fast Forward': '⏩',
   'Rewind': '⏪',
 
   // Main Lighting
-  'Backlight Mode Switch→': '🚥→',
-  'Backlight Mode Switch←': '←🚥',
-  'Backlight brightness +': '🔆',
-  'Backlight brightness -': '🔅',
-  'Backlight speed +': '⚡+',
-  'Backlight speed -': '⚡-',
-  'Switch backlight color→': '🎨→',
-  'Switch backlight color←': '←🎨',
-  'Toggle keyboard backlight': '💡',
-  'Switch lighting effect': '🌈',
-  'Switch lighting color': '🎨',
+  'Backlight Mode Switch→': '\ue6c2',
+  'Backlight Mode Switch←': '\ue6c1',
+  'Backlight brightness +': '\ue6c7',
+  'Backlight brightness -': '\ue6c4',
+  'Backlight speed +': '\ue6c9',
+  'Backlight speed -': '\ue6ca',
+  'Switch backlight color→': '\ue6c3',
+  'Switch backlight color←': '\ue6c5',
+  'Toggle keyboard backlight': '\ue6c6',
+  'Switch lighting effect': '\ue6c2',
+  'Switch lighting color': '\ue6c3',
 
   // Side Lighting
-  'Switch indicator mode': '🚥',
-  'Indicator brightness +': '💡+',
-  'Indicator brightness -': '💡-',
-  'Indicator speed +': '⚡+',
-  'Indicator speed -': '⚡-',
-  'Indicator Speed Switch': '⚡',
-  'Switch indicator color': '🎨',
-  'Indicator On/Off': '💡',
+  'Switch indicator mode': '\ue76b',
+  'Indicator brightness +': '\ue70a',
+  'Indicator brightness -': '\ue708',
+  'Indicator speed +': '\ue704',
+  'Indicator speed -': '\ue705',
+  'Indicator Speed Switch': '\ue704',
+  'Switch indicator color': '\ue709',
+  'Indicator On/Off': '\ue70b',
 
   // Shortcuts & System (Mac & Win)
-  'Screen brightness +': '🔆',
-  'Screen brightness -': '🔅',
-  'Mission Control': '⊞',
+  'Screen brightness +': '\ue6c7',
+  'Screen brightness -': '\ue67b',
+  'Mission Control': '\ue670',
   'Launchpad': '㗊',
-  'VoiceOver': '🎙',
+  'VoiceOver': '\ue64f',
   'Siri': '🎙',
-  'Spotlight': '🔍',
-  'Search': '🔍',
-  'Search (Web)': '🌐',
-  'Refresh (web page)': '🔄',
-  'Emoji & Symbols': '😀',
-  'Emoji box': '😀',
-  'Lock screen': '🔒',
-  'Lock computer': '🔒',
-  'Force Quit': '⌥⌘⎋',
-  'Show/hide Dock': '⌥⌘D',
-  'switch window': '⌘⇥',
-  'Switch to next App': '⌘⇥',
-  'Open Finder': '⌥⌘␣',
-  'Show bookmarks (Safari)': '⌥⌘B',
-  'Find/Address Bar': '⌘L',
-  'Go to home directory': '⌘⇧H',
-  'Zoom in': '⌘+',
-  'Zoom out': '⌘-',
-  'Actual Size': '⌘0',
-  'Undo': '⌘Z',
-  'Redo': '⇧⌘Z',
-  'Copy': '⌘C',
-  'Cut': '⌘X',
-  'Paste': '⌘V',
-  'Select all': '⌘A',
-  'Save': '⌘S',
-  'Open': '⌘O',
-  'Open file': '⌘O',
-  'New Item': '⌘N',
-  'Create': '⌘N',
-  'New file/window': '⌘N',
-  'Close item': '⌘W',
-  'Close current tab/window': '⌘W',
-  'Close window': '✕',
-  'Action center': '🔔',
-  'File Explorer': '📁',
-  'Windows settings center': '⚙️',
-  'Cast screen to other devices': '📺',
-  'Jump to tray': '📥',
-  'Start Xbox game bar': '🎮',
-  'Run': '▶',
-  'Display settings': '🖥️',
-  'Simple menu': '☰',
-  'Start menu': '🪟',
-  'Taskbar': '📋',
-  'Browser homepage': '🏠',
-  'Calculator': '🧮',
-  'Mail': '✉️',
-  'My computer': '💻',
-  'Favorites': '⭐',
-  'Windows security screen': '🛡️',
-  'Task Manager': '📊',
-  'Show desktop': '🖥️',
-  'Open navigation': '🧭',
-  'Cycle taskbar Apps': '⌘⇥',
-  'Back (keyboard)': '←',
-  'Forward (keyboard)': '→',
-  'Go back/up one level': '⌘[',
-  'Go to next page': '⌘]',
-  'Switch Profile': '⟳',
-  'Clear': '⌧',
-  'Disabled': '🚫',
-  'FN Layer': 'Fn',
+  'Spotlight': '\ue6e8',
+  'Search': '\ue658',
+  'Search (Web)': '\ue77c',
+  'Refresh (web page)': '\ue77a',
+  'Emoji & Symbols': '\ue683',
+  'Emoji box': '\ue683',
+  'Lock screen': '\ue667',
+  'Lock computer': '\ue657',
+  'Force Quit': '\ue675',
+  'Show/hide Dock': '\ue68b',
+  'switch window': '\ue66d',
+  'Switch to next App': '\ue673',
+  'Open Finder': '\ue681',
+  'Show bookmarks (Safari)': '\ue6c8',
+  'Find/Address Bar': '\ue658',
+  'Go to home directory': '\ue688',
+  'Zoom in': '\ue650',
+  'Zoom out': '\ue665',
+  'Actual Size': '\ue67a',
+  'Reset': '\ue67a',
+  'Restore': '\ue77b',
+  'Undo': '\ue671',
+  'Redo': '\ue7b2',
+  'Copy': '\ue66e',
+  'Cut': '\ue674',
+  'Paste': '\ue67d',
+  'Select all': '\ue660',
+  'Save': '\ue661',
+  'Open': '\ue65c',
+  'Open file': '\ue65c',
+  'New Item': '\ue67e',
+  'Create': '\ue680',
+  'New file/window': '\ue67e',
+  'Close item': '\ue64b',
+  'Close current tab/window': '\ue64b',
+  'Close window': '\ue66a',
+  'Action center': '\ue668',
+  'File Explorer': '\ue681',
+  'Windows settings center': '\ue6e0',
+  'Cast screen to other devices': '\ue656',
+  'Jump to tray': '\ue653',
+  'Start Xbox game bar': '\ue651',
+  'Run': '\ue663',
+  'Display settings': '\ue64d',
+  'Simple menu': '\ue646',
+  'Start menu': '\ue64e',
+  'Taskbar': '\ue68b',
+  'Browser homepage': '\ue68a',
+  'Calculator': '\ue687',
+  'Mail': '\ue68c',
+  'My computer': '\ue688',
+  'Favorites': '\ue689',
+  'Windows security screen': '\ue699',
+  'Task Manager': '\ue649',
+  'Show desktop': '\ue670',
+  'Open navigation': '\ue655',
+  'Cycle taskbar Apps': '\ue655',
+  'Back (keyboard)': '\ue676',
+  'Forward (keyboard)': '\ue682',
+  'Go back/up one level': '\ue676',
+  'Go to next page': '\ue682',
+  'Switch Profile': '\ue6dc',
+  'Clear': '\ue678',
+  'Disabled': '\ue678',
+  'FN Layer': '\ue753',
 
   // Basic Modifiers & Keys
   'Left GUI / Win': '⌘',
@@ -2407,7 +2409,7 @@ const PALETTE_BUTTON_ICONS = {
   'PgDn': '⇟',
   'Home': '↖',
   'End': '↘',
-  'Print Screen': '📷',
+  'Print Screen': '\ue6e5',
   'Scroll Lock': '📜',
   'Pause': '⏸',
   'Insert': '⎀',
@@ -2416,6 +2418,7 @@ const PALETTE_BUTTON_ICONS = {
 
 function getMacKeyIcon(key, assigned, rawLabel) {
   if (assigned) {
+    if (assigned.label === 'FN Layer') return '\ue752';
     const l = assigned.label || rawLabel;
     if (l && PALETTE_BUTTON_ICONS[l]) return PALETTE_BUTTON_ICONS[l];
     if (assigned.type === 16) {
@@ -2431,6 +2434,7 @@ function getMacKeyIcon(key, assigned, rawLabel) {
     }
   }
 
+  if (rawLabel === 'FN Layer') return '\ue752';
   if (rawLabel && PALETTE_BUTTON_ICONS[rawLabel]) {
     return PALETTE_BUTTON_ICONS[rawLabel];
   }
@@ -2439,18 +2443,18 @@ function getMacKeyIcon(key, assigned, rawLabel) {
     if (key.id === 'k_lwin' || key.id === 'k_rwin') return '⌥';
     if (key.id === 'k_lalt' || key.id === 'k_ralt') return '⌘';
     if (state.activeLayer === 2 || state.activeLayer === 3) {
-      if (key.id === 'k_f1') return '🔅';
-      if (key.id === 'k_f2') return '🔆';
-      if (key.id === 'k_f3') return '⊞';
+      if (key.id === 'k_f1') return '\ue67b';
+      if (key.id === 'k_f2') return '\ue6c7';
+      if (key.id === 'k_f3') return '\ue670';
       if (key.id === 'k_f4') return '㗊';
       if (key.id === 'k_f5') return '🎙';
       if (key.id === 'k_f6') return '🌙';
-      if (key.id === 'k_f7') return '⏮';
-      if (key.id === 'k_f8') return '⏯';
-      if (key.id === 'k_f9') return '⏭';
-      if (key.id === 'k_f10') return '🔇';
-      if (key.id === 'k_f11') return '🔉';
-      if (key.id === 'k_f12') return '🔊';
+      if (key.id === 'k_f7') return '\ue66b';
+      if (key.id === 'k_f8') return '\ue65b';
+      if (key.id === 'k_f9') return '\ue662';
+      if (key.id === 'k_f10') return '\ue66c';
+      if (key.id === 'k_f11') return '\ue679';
+      if (key.id === 'k_f12') return '\ue669';
     }
     if (key.id === 'k_esc') return '⎋';
     if (key.id === 'k_tab') return '⇥';
@@ -2476,7 +2480,9 @@ function getMacKeyIcon(key, assigned, rawLabel) {
 
 function getPaletteIcon(item) {
   if (!item || !item.label) return null;
-  if (item.label === 'FN Layer') return 'Fn';
+  if (item.label === 'FN Layer') {
+    return isMacConfig() ? '\ue752' : '\ue753';
+  }
   if (PALETTE_BUTTON_ICONS[item.label]) return PALETTE_BUTTON_ICONS[item.label];
 
   if (item.type === 16) {
@@ -2784,7 +2790,7 @@ function renderPalette() {
       mBtn.dataset.code1 = String(i);
       mBtn.dataset.code2 = String(slot.type || 0);
       mBtn.dataset.label = `M${i + 1}`;
-      mBtn.dataset.icon = '⚡';
+      mBtn.dataset.icon = '\ue6de';
       mBtn.dataset.display = `M${i + 1}`;
       mBtn.addEventListener('click', () => {
         assignMacroToSelected(i);

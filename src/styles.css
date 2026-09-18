@@ -1,6 +1,22 @@
 /* Maicong Studio — light hub layout modeled on public G75 workspace geometry.
    Tokens from official light theme (mc-color-w*). Original CSS; no vendor assets. */
 
+@font-face {
+  font-family: "iconfont";
+  src: url("./assets/iconfont/iconfont.woff2") format("woff2");
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
+.iconfont {
+  font-family: "iconfont" !important;
+  font-size: 16px;
+  font-style: normal;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
 :root {
   --mc-w1: #151515;
   --mc-w2: rgba(21, 21, 21, 0.5);
@@ -1356,13 +1372,16 @@ button.kb-key.compact-label .key-label {
 .kb-key[data-icon]::before {
   content: attr(data-icon);
   display: block;
+  font-family: "iconfont", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 13.5px;
   line-height: 1;
   font-style: normal;
-  font-weight: 600;
+  font-weight: normal;
   margin-bottom: 1px;
   pointer-events: none;
   color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .kb-key.selected[data-icon]::before {
@@ -1406,11 +1425,14 @@ html[lang^="zh"] .kb-key.compact-label .key-label[data-display]::after {
 #inspector-key-box[data-icon]::before {
   content: attr(data-icon);
   display: block;
-  font-size: 22px;
+  font-family: "iconfont", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 24px;
   line-height: 1;
-  font-weight: 700;
+  font-weight: normal;
   margin-bottom: 2px;
   color: var(--theme-color);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 html:lang(zh) #inspector-key-box[data-display],
@@ -2001,13 +2023,16 @@ html[lang^="zh"] .palette-cat-btn[data-display]::after {
 .palette-key-btn[data-icon]::before {
   content: attr(data-icon);
   display: block;
-  font-size: 17px;
+  font-family: "iconfont", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 19px;
   line-height: 1.15;
   margin-bottom: 2px;
   font-style: normal;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary);
   text-align: center;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 html:lang(zh) .palette-key-btn[data-display],
