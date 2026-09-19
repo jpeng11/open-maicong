@@ -2084,6 +2084,7 @@ function buildKeyButton(key, idPrefix) {
 
 function isMacConfig() {
   if (state.activeLayer === 2 || state.activeLayer === 3) return true;
+  if (state.activeLayer === 0 || state.activeLayer === 1) return false;
   if (state.settings && ((state.settings.macMode & 3) === 2)) return true;
   return false;
 }
@@ -2377,78 +2378,61 @@ const PALETTE_BUTTON_ICONS = {
   'Disabled': '\ue678',
   'FN Layer': '\ue753',
 
-  // Basic Modifiers & Keys
-  'Left GUI / Win': '⌘',
-  'Right GUI / Win': '⌘',
-  'Left Alt / Option': '⌥',
-  'Right Alt / Option': '⌥',
-  'Left Ctrl': '⌃',
-  'Right Ctrl': '⌃',
-  'Left Shift': '⇧',
-  'Right Shift': '⇧',
-  'Caps Lock': '⇪',
-  'Caps': '⇪',
-  'Backspace': '⌫',
-  'Enter': '⏎',
-  'Tab': '⇥',
-  'Esc': '⎋',
-  'Escape': '⎋',
-  'Delete': '⌦',
-  'Space': '␣',
-  'Up Arrow': '↑',
-  'Down Arrow': '↓',
-  'Left Arrow': '←',
-  'Right Arrow': '→',
-  '↑': '↑',
-  '↓': '↓',
-  '←': '←',
-  '→': '→',
-  'Page Up': '⇞',
-  'Page Down': '⇟',
-  'PgUp': '⇞',
-  'PgDn': '⇟',
-  'Home': '↖',
-  'End': '↘',
-  'Print Screen': '\ue6e5',
-  'Scroll Lock': '📜',
-  'Pause': '⏸',
-  'Insert': '⎀',
-  'Num Lock': '🔢'
+  // Arrows & System Modifiers
+  'Up Arrow': '\ue78e',
+  'Down Arrow': '\ue791',
+  'Left Arrow': '\ue78f',
+  'Right Arrow': '\ue790',
+  '↑': '\ue78e',
+  '↓': '\ue791',
+  '←': '\ue78f',
+  '→': '\ue790',
+  'Left GUI / Win': '\ue647',
+  'Right GUI / Win': '\ue647',
+  'Left Alt / Option': '\ue6e1',
+  'Right Alt / Option': '\ue6e1',
+  'Command': '\ue6ea',
+  'Option': '\ue6e1',
+  'Print Screen': '\ue6e5'
 };
 
-function getMacKeyIcon(key, assigned, rawLabel) {
+function getKeyboardKeyIcon(key, assigned, rawLabel) {
+  const isMac = isMacConfig();
+
   if (assigned) {
-    if (assigned.label === 'FN Layer') return '\ue752';
+    if (assigned.label === 'FN Layer') return isMac ? '\ue752' : '\ue753';
     const l = assigned.label || rawLabel;
     if (l && PALETTE_BUTTON_ICONS[l]) return PALETTE_BUTTON_ICONS[l];
     if (assigned.type === 16) {
-      if (assigned.code1 === 8 || assigned.code1 === 128) return '⌘';
-      if (assigned.code1 === 4 || assigned.code1 === 64) return '⌥';
-      if (assigned.code1 === 1 || assigned.code1 === 16) return '⌃';
-      if (assigned.code1 === 2 || assigned.code1 === 32) return '⇧';
-      if (assigned.code2 === 42) return '⌫';
-      if (assigned.code2 === 40) return '⏎';
-      if (assigned.code2 === 43) return '⇥';
-      if (assigned.code2 === 41) return '⎋';
-      if (assigned.code2 === 76) return '⌦';
+      if (assigned.code1 === 8 || assigned.code1 === 128) return isMac ? '\ue6e1' : '\ue647';
+      if (assigned.code1 === 4 || assigned.code1 === 64) return isMac ? '\ue6ea' : null;
+      if (assigned.code2 === 82) return '\ue78e';
+      if (assigned.code2 === 81) return '\ue791';
+      if (assigned.code2 === 80) return '\ue78f';
+      if (assigned.code2 === 79) return '\ue790';
     }
   }
 
-  if (rawLabel === 'FN Layer') return '\ue752';
+  if (rawLabel === 'FN Layer') return isMac ? '\ue752' : '\ue753';
   if (rawLabel && PALETTE_BUTTON_ICONS[rawLabel]) {
     return PALETTE_BUTTON_ICONS[rawLabel];
   }
 
   if (key) {
-    if (key.id === 'k_lwin' || key.id === 'k_rwin') return '⌥';
-    if (key.id === 'k_lalt' || key.id === 'k_ralt') return '⌘';
+    if (key.id === 'k_lwin' || key.id === 'k_rwin') return isMac ? '\ue6e1' : '\ue647';
+    if (key.id === 'k_lalt' || key.id === 'k_ralt') return isMac ? '\ue6ea' : null;
+    if (key.id === 'k_fn') return isMac ? '\ue752' : '\ue753';
+    if (key.id === 'k_up') return '\ue78e';
+    if (key.id === 'k_down') return '\ue791';
+    if (key.id === 'k_left') return '\ue78f';
+    if (key.id === 'k_right') return '\ue790';
     if (state.activeLayer === 2 || state.activeLayer === 3) {
       if (key.id === 'k_f1') return '\ue67b';
       if (key.id === 'k_f2') return '\ue6c7';
       if (key.id === 'k_f3') return '\ue670';
-      if (key.id === 'k_f4') return '㗊';
-      if (key.id === 'k_f5') return '🎙';
-      if (key.id === 'k_f6') return '🌙';
+      if (key.id === 'k_f4') return '\ue646';
+      if (key.id === 'k_f5') return '\ue64f';
+      if (key.id === 'k_f6') return '\ue609';
       if (key.id === 'k_f7') return '\ue66b';
       if (key.id === 'k_f8') return '\ue65b';
       if (key.id === 'k_f9') return '\ue662';
@@ -2456,23 +2440,6 @@ function getMacKeyIcon(key, assigned, rawLabel) {
       if (key.id === 'k_f11') return '\ue679';
       if (key.id === 'k_f12') return '\ue669';
     }
-    if (key.id === 'k_esc') return '⎋';
-    if (key.id === 'k_tab') return '⇥';
-    if (key.id === 'k_caps') return '⇪';
-    if (key.id === 'k_enter') return '⏎';
-    if (key.id === 'k_lshift' || key.id === 'k_rshift') return '⇧';
-    if (key.id === 'k_bsp' || key.id === 'k_backspace') return '⌫';
-    if (key.id === 'k_del') return '⌦';
-    if (key.id === 'k_lctrl' || key.id === 'k_rctrl') return '⌃';
-    if (key.id === 'k_space') return '␣';
-    if (key.id === 'k_up') return '↑';
-    if (key.id === 'k_down') return '↓';
-    if (key.id === 'k_left') return '←';
-    if (key.id === 'k_right') return '→';
-    if (key.id === 'k_pgup') return '⇞';
-    if (key.id === 'k_pgdn') return '⇟';
-    if (key.id === 'k_home') return '↖';
-    if (key.id === 'k_end') return '↘';
   }
 
   return null;
@@ -2486,10 +2453,16 @@ function getPaletteIcon(item) {
   if (PALETTE_BUTTON_ICONS[item.label]) return PALETTE_BUTTON_ICONS[item.label];
 
   if (item.type === 16) {
-    if (item.code === 227 || item.code === 231 || item.code1 === 8 || item.code1 === 128) return '⌘';
-    if (item.code === 226 || item.code === 230 || item.code1 === 4 || item.code1 === 64) return '⌥';
-    if (item.code === 224 || item.code === 228 || item.code1 === 1 || item.code1 === 16) return '⌃';
-    if (item.code === 225 || item.code === 229 || item.code1 === 2 || item.code1 === 32) return '⇧';
+    if (item.code === 227 || item.code === 231 || item.code1 === 8 || item.code1 === 128) {
+      return isMacConfig() ? '\ue6e1' : '\ue647';
+    }
+    if (item.code === 226 || item.code === 230 || item.code1 === 4 || item.code1 === 64) {
+      return isMacConfig() ? '\ue6ea' : null;
+    }
+    if (item.code === 82) return '\ue78e';
+    if (item.code === 81) return '\ue791';
+    if (item.code === 80) return '\ue78f';
+    if (item.code === 79) return '\ue790';
   }
   return null;
 }
@@ -2519,11 +2492,8 @@ function patchKeyButton(keyEl, key, isLightingMode) {
     if (labelSpan) delete labelSpan.dataset.display;
   } else {
     if (labelSpan && labelSpan.textContent !== label) labelSpan.textContent = label;
-    const isMac = !isLightingMode && isMacConfig();
     const assigned = !isLightingMode ? state.layerKeymaps[state.activeLayer]?.[key.slot] : null;
-    const icon = isMac
-      ? getMacKeyIcon(key, assigned, label)
-      : (assigned && PALETTE_BUTTON_ICONS[assigned.label || label] ? PALETTE_BUTTON_ICONS[assigned.label || label] : null);
+    const icon = !isLightingMode ? getKeyboardKeyIcon(key, assigned, label) : null;
     if (icon) {
       keyEl.dataset.icon = icon;
       keyEl.classList.add('mac-icon-key');
@@ -2531,6 +2501,8 @@ function patchKeyButton(keyEl, key, isLightingMode) {
       delete keyEl.dataset.icon;
       keyEl.classList.remove('mac-icon-key');
     }
+    const isArrowKey = key.id === 'k_up' || key.id === 'k_down' || key.id === 'k_left' || key.id === 'k_right';
+    keyEl.classList.toggle('arrow-key', Boolean(isArrowKey && icon));
     const zhDisplay = PALETTE_ZH_LABELS[label];
     if (zhDisplay) {
       keyEl.dataset.display = zhDisplay;
@@ -2637,13 +2609,18 @@ function selectKey(key) {
     displayLabel = assigned.label || `M${(assigned.code1 || 0) + 1}`;
   }
   const customColor = state.stagedKeyColors[key.slot];
-  const isMac = isMacConfig();
-  const icon = isMac
-    ? getMacKeyIcon(key, assigned, displayLabel)
-    : (assigned && PALETTE_BUTTON_ICONS[assigned.label || displayLabel] ? PALETTE_BUTTON_ICONS[assigned.label || displayLabel] : (PALETTE_BUTTON_ICONS[displayLabel] || null));
+  const icon = getKeyboardKeyIcon(key, assigned, displayLabel);
 
   if (box) {
-    box.textContent = displayLabel;
+    let textEl = box.querySelector('.inspector-key-text');
+    if (!textEl) {
+      box.textContent = '';
+      textEl = document.createElement('span');
+      textEl.className = 'inspector-key-text';
+      box.append(textEl);
+    }
+    textEl.textContent = displayLabel;
+
     if (icon) {
       box.dataset.icon = icon;
     } else {
@@ -2652,8 +2629,10 @@ function selectKey(key) {
     const zhDisplay = PALETTE_ZH_LABELS[displayLabel];
     if (zhDisplay) {
       box.dataset.display = zhDisplay;
+      textEl.dataset.display = zhDisplay;
     } else {
       delete box.dataset.display;
+      delete textEl.dataset.display;
     }
     if (customColor && customColor !== '#000000') {
       box.style.borderColor = customColor;

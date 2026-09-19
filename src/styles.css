@@ -1394,6 +1394,15 @@ button.kb-key.compact-label .key-label {
   opacity: 0.85;
 }
 
+.kb-key.arrow-key .key-label {
+  display: none !important;
+}
+
+.kb-key.arrow-key[data-icon]::before {
+  font-size: 15px;
+  margin-bottom: 0;
+}
+
 html:lang(zh) .key-label[data-display],
 html[lang^="zh"] .key-label[data-display] {
   font-size: 0 !important;
@@ -1420,33 +1429,59 @@ html[lang^="zh"] .kb-key.compact-label .key-label[data-display]::after {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 2px;
+  padding: 4px;
+  box-sizing: border-box;
 }
 
 #inspector-key-box[data-icon]::before {
   content: attr(data-icon);
   display: block;
   font-family: "iconfont", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-size: 24px;
+  font-size: 20px;
   line-height: 1;
   font-weight: normal;
-  margin-bottom: 2px;
+  margin: 0;
   color: var(--theme-color);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-html:lang(zh) #inspector-key-box[data-display],
-html[lang^="zh"] #inspector-key-box[data-display] {
+.inspector-key-text {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.1;
+  text-align: center;
+}
+
+#inspector-key-box[data-icon] .inspector-key-text {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+html:lang(zh) .inspector-key-text[data-display],
+html[lang^="zh"] .inspector-key-text[data-display] {
   font-size: 0 !important;
 }
 
-html:lang(zh) #inspector-key-box[data-display]::after,
-html[lang^="zh"] #inspector-key-box[data-display]::after {
+html:lang(zh) .inspector-key-text[data-display]::after,
+html[lang^="zh"] .inspector-key-text[data-display]::after {
   content: attr(data-display);
   font-size: 13px;
-  font-weight: 600;
-  line-height: 1.2;
+  font-weight: 700;
+  line-height: 1.1;
   display: block;
+  text-align: center;
+}
+
+html:lang(zh) #inspector-key-box[data-icon] .inspector-key-text[data-display]::after,
+html[lang^="zh"] #inspector-key-box[data-icon] .inspector-key-text[data-display]::after {
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+  margin: 0;
+  padding: 0;
 }
 
 .key-color-dot {
@@ -1925,8 +1960,8 @@ html[lang^="zh"] #inspector-key-box[data-display]::after {
 .selected-key-details {
   display: flex;
   align-items: center;
-  gap: 14px;
-  margin-top: 12px;
+  gap: 10px;
+  margin-top: 10px;
 }
 
 .key-preview-box {

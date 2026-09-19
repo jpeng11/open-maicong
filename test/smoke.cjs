@@ -145,16 +145,58 @@ async function run({ app, getWindow, getState }) {
   fs.writeFileSync(dashPath, dashImg.toPNG());
   console.log('[Smoke] Captured standalone dashboard screenshot:', dashPath);
 
-  // Capture screenshot of keymap
+  // Capture screenshot of keymap in Chinese with Extended Functions
   await win.webContents.executeJavaScript(`
-    document.querySelector('[data-action="set-tab"][data-tab="keymap"]')?.click();
+    (() => {
+      document.getElementById("lang-zh")?.click();
+      document.querySelector('[data-action="set-tab"][data-tab="keymap"]')?.click();
+      document.querySelector('[data-action="set-layer"][data-layer="0"]')?.click();
+      const extTab = Array.from(document.querySelectorAll('#palette-category-tabs .palette-cat-btn')).find(b => b.textContent.includes('Extended') || b.dataset.display?.includes('扩展'));
+      if (extTab) extTab.click();
+      document.getElementById('k_esc')?.click();
+    })()
   `);
-  await sleep(300);
+  await sleep(400);
 
   const keymapImg = await win.webContents.capturePage();
-  const keymapPath = path.join(ARTIFACTS_DIR, 'smoke-standalone-keymap.png');
+  const keymapPath = path.join(ARTIFACTS_DIR, 'smoke-keymap-extended.png');
   fs.writeFileSync(keymapPath, keymapImg.toPNG());
+  const brainDir = '/Users/percy/.gemini/antigravity-cli/brain/91ef08e2-21e7-45ea-ae1f-cc7d41077b8e';
+  if (fs.existsSync(brainDir)) {
+    fs.writeFileSync(path.join(brainDir, 'smoke-keymap-extended.png'), keymapImg.toPNG());
+  }
   console.log('[Smoke] Captured standalone keymap screenshot:', keymapPath);
+
+  // Capture screenshot of keymap on Mac Layer 2 with Win key selected
+  await win.webContents.executeJavaScript(`
+    (() => {
+      document.querySelector('[data-action="set-layer"][data-layer="2"]')?.click();
+      document.getElementById('k_lwin')?.click();
+    })()
+  `);
+  await sleep(400);
+
+  const macImg = await win.webContents.capturePage();
+  const macPath = path.join(ARTIFACTS_DIR, 'smoke-keymap-mac-layer2.png');
+  fs.writeFileSync(macPath, macImg.toPNG());
+  if (fs.existsSync(brainDir)) {
+    fs.writeFileSync(path.join(brainDir, 'smoke-keymap-mac-layer2.png'), macImg.toPNG());
+  }
+  console.log('[Smoke] Captured Mac layer 2 keymap screenshot:', macPath);
+
+  // Return to Layer 0 and select Win key to capture Windows key in inspector
+  await win.webContents.executeJavaScript(`
+    (() => {
+      document.querySelector('[data-action="set-layer"][data-layer="0"]')?.click();
+      document.getElementById('k_lwin')?.click();
+    })()
+  `);
+  await sleep(400);
+
+  const winKeyImg = await win.webContents.capturePage();
+  if (fs.existsSync(brainDir)) {
+    fs.writeFileSync(path.join(brainDir, 'smoke-keymap-win-key.png'), winKeyImg.toPNG());
+  }
 
   console.log(`[Smoke] Standalone verification passed in ${Date.now() - startTime}ms with 0 hardware writes!`);
 }
