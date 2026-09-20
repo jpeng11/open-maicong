@@ -1220,7 +1220,7 @@ function renderDashboardProfiles() {
       <div class="dash-slot-actions">
         ${enabled && !isActive ? `<button type="button" class="action-btn sm primary" data-action="switch-profile" data-profile="${i}">${t('profile.activate')}</button>` : ''}
         ${enabled && !isEditing ? `<button type="button" class="action-btn sm" data-action="load-edit-profile" data-profile="${i}">${t('sidebar.loadEdit')}</button>` : ''}
-        ${enabled && isEditing && (state.editingProfile !== state.activeProfile || isLocalPreview()) ? `<button type="button" class="action-btn sm" data-action="cancel-edit">${t('sidebar.cancelEdit')}</button>` : ''}
+        ${enabled && isEditing ? `<button type="button" class="action-btn sm cancel-edit-btn" data-action="cancel-edit">${t('sidebar.cancelEdit')}</button>` : ''}
         ${!enabled ? `<button type="button" class="action-btn sm" data-action="enable-fourth-profile">${t('profile.enable4')}</button>` : ''}
       </div>
     `;
@@ -1375,7 +1375,7 @@ function renderProfileLibrary() {
               : t('profile.notEnabledDesc')}</p>
           </div>
           <div class="profile-controls">
-            ${enabled && isEditing && (state.editingProfile !== state.activeProfile || isLocalPreview()) ? `<button type="button" class="action-btn sm cancel-edit-btn" data-action="cancel-edit" title="${t('sidebar.cancelEdit')}"><svg class="line-icon sm"><use href="#i-refresh"/></svg><span>${t('sidebar.cancelEdit')}</span></button>` : ''}
+            ${enabled && isEditing ? `<button type="button" class="action-btn sm cancel-edit-btn" data-action="cancel-edit" title="${t('sidebar.cancelEdit')}"><svg class="line-icon sm"><use href="#i-refresh"/></svg><span>${t('sidebar.cancelEdit')}</span></button>` : ''}
             <button class="action-btn select-profile-btn ${isActive ? 'active' : ''}" data-action="switch-profile" data-profile="${i}" ${!enabled || isActive ? 'disabled' : ''}>${isActive ? t('profile.active') : (enabled ? t('profile.activate') : t('profile.notEnabled'))}</button>
             <button type="button" class="profile-more-btn" data-action="toggle-profile-menu" data-profile="${i}" aria-label="${t('common.moreOptions') || 'More options'}" title="${t('common.moreOptions') || 'More options'}">
               <svg class="line-icon sm"><use href="#i-more"/></svg>
@@ -1384,7 +1384,7 @@ function renderProfileLibrary() {
         </div>
         <div class="profile-card-actions profile-menu-dropdown" role="menu">
           ${enabled && !isEditing ? `<button class="action-btn menu-item" data-action="load-edit-profile" data-profile="${i}"><svg class="line-icon sm"><use href="#i-edit"/></svg><span>${t('sidebar.loadEdit')}</span></button>` : ''}
-          ${enabled && isEditing && (state.editingProfile !== state.activeProfile || isLocalPreview()) ? `<button class="action-btn menu-item" data-action="cancel-edit"><svg class="line-icon sm"><use href="#i-refresh"/></svg><span>${t('sidebar.cancelEdit')}</span></button>` : ''}
+          ${enabled && isEditing ? `<button class="action-btn menu-item" data-action="cancel-edit"><svg class="line-icon sm"><use href="#i-refresh"/></svg><span>${t('sidebar.cancelEdit')}</span></button>` : ''}
           ${enabled && !isActive ? `<button class="action-btn menu-item" data-action="switch-profile" data-profile="${i}"><svg class="line-icon sm"><use href="#i-radio"/></svg><span>${t('sidebar.activate')}</span></button>` : ''}
           ${enabled ? `<button class="action-btn menu-item" data-action="copy-onboard-local" data-profile="${i}"><svg class="line-icon sm"><use href="#i-copy"/></svg><span>${t('profile.copy')}</span></button>
           <button class="action-btn menu-item" data-action="rename-profile" data-kind="keyboard" data-key="KeyboardProfile@keyboard@${i}" data-profile="${i}" data-name="${escapeAttr(onboardName(i))}"><svg class="line-icon sm"><use href="#i-edit"/></svg><span>${t('profile.rename')}</span></button>
@@ -8241,7 +8241,7 @@ function renderEditTargetBar() {
   const isDifferent = isLocalPreview() || state.editingProfile !== state.activeProfile;
   const cancelBtn = document.getElementById('btn-cancel-edit');
   if (cancelBtn) {
-    cancelBtn.hidden = !isDifferent;
+    cancelBtn.hidden = false;
   }
   const banner = document.getElementById('editing-mode-banner');
   const bannerText = document.getElementById('editing-banner-text');
@@ -8267,11 +8267,21 @@ function renderEditTargetBar() {
 }
 
 async function handleCancelEdit() {
+  const isDifferent = isLocalPreview() || state.editingProfile !== state.activeProfile;
+  if (isLocalPreview()) {
+    state.localPreviewTarget = null;
+    state.localPreviewDraft = null;
+  }
   const sel = document.getElementById('edit-profile-select');
   if (sel) {
     sel.value = String(state.activeProfile);
   }
-  return handleLoadEditTarget();
+  await handleLoadEditTarget();
+  if (isDifferent) {
+    showToast(t('sidebar.cancelEditDone', { default: '已取消编辑，返回当前键盘配置' }), 'info');
+  } else {
+    showToast(t('sidebar.reloadCleanDone', { default: '已重置未保存修改并重新加载当前配置' }), 'info');
+  }
 }
 
 async function handleLoadEditTarget() {
