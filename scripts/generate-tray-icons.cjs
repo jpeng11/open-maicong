@@ -1,3 +1,5 @@
+'use strict';
+
 const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
@@ -67,89 +69,102 @@ function createPng(width, height, drawPixel) {
   ]);
 }
 
-function drawKeyboardIcon(scale) {
-  const size = 16 * scale;
-  // Keyboard bounding box
-  const left = 1 * scale;
-  const right = 15 * scale - 1;
-  const top = 3 * scale;
-  const bottom = 13 * scale - 1;
-  const r = 2 * scale; // corner radius
+/**
+ * Renders the App Icon converted into a monochrome vector template for the macOS menu bar.
+ * Uses 4x4 sub-pixel supersampling for anti-aliasing.
+ *
+ * @param {number} size 16 for standard, 32 for @2x Retina
+ */
+function renderTrayTemplatePng(size) {
+  const scale = size / 16;
+  const SUB = 4;
 
-  return createPng(size, size, (x, y) => {
-    // Check if within outer rounded rect
-    let inOuter = false;
-    if (x >= left && x <= right && y >= top && y <= bottom) {
-      const dx = Math.max(0, left + r - x, x - (right - r));
-      const dy = Math.max(0, top + r - y, y - (bottom - r));
-      if (dx * dx + dy * dy <= r * r) {
-        inOuter = true;
-      }
-    }
-    if (!inOuter) return [0, 0, 0, 0];
+  return createPng(size, size, (x, y, w, h) => {
+    let totalSamples = 0;
+    for (let sy = 0; sy < SUB; sy++) {
+      for (let sx = 0; sx < SUB; sx++) {
+        const px = (x + (sx + 0.5) / SUB) / scale;
+        const py = (y + (sy + 0.5) / SUB) / scale;
 
-    // Stroke width = 1 * scale
-    const s = 1 * scale;
-    const inInner = (x >= left + s && x <= right - s && y >= top + s && y <= bottom - s);
-    const innerR = Math.max(1, r - s);
-    let insideInner = false;
-    if (inInner) {
-      const idx = Math.max(0, left + s + innerR - x, x - (right - s - innerR));
-      const idy = Math.max(0, top + s + innerR - y, y - (bottom - s - innerR));
-      if (idx * idx + idy * idy <= innerR * innerR) {
-        insideInner = true;
-      }
-    }
+        // Normalized [-1, 1] relative to icon center
+        const nx = (px / 8) - 1;
+        const ny = (py / 8) - 1;
 
-    // Outer border stroke
-    if (!insideInner) {
-      return [0, 0, 0, 255];
-    }
+        // macOS Squircle outer rim (same formula as renderAppIcon)
+        const dSq = Math.pow(Math.abs(nx * 1.15), 4.5) + Math.pow(Math.abs(ny * 1.15), 4.5);
+        const inSquircleRim = (dSq <= 0.98 && dSq >= 0.68);
 
-    // Keys inside
-    // Row 1 (top keys): y roughly 5 to 6
-    const row1Y = top + 2 * scale;
-    const row2Y = top + 4.5 * scale;
-    const row3Y = top + 7 * scale;
-    const keyH = 1.3 * scale;
+        // Center glyph matching app icon (scaled for optimal menu bar legibility)
+        const mx = nx / 0.9;
+        const my = ny / 0.9;
 
-    // Check individual keys
-    // Row 1: 4 dots/keys
-    if (y >= row1Y && y < row1Y + keyH) {
-      for (let i = 0; i < 4; i++) {
-        const kx = left + (2.5 + i * 2.8) * scale;
-        if (x >= kx && x < kx + 1.8 * scale) return [0, 0, 0, 255];
+        const inMLeft = (mx >= -0.42 && mx <= -0.20 && my >= -0.42 && my <= 0.42);
+        const inMRight = (mx >= 0.20 && mx <= 0.42 && my >= -0.42 && my <= 0.42);
+        const inMMidL = (Math.abs(my + mx * 0.9 + 0.04) < 0.14 && mx >= -0.32 && mx <= 0 && my <= 0.10);
+        const inMMidR = (Math.abs(my - mx * 0.9 + 0.04) < 0.14 && mx <= 0.32 && mx >= 0 && my <= 0.10);
+
+        if (inSquircleRim || inMLeft || inMRight || inMMidL || inMMidR) {
+          totalSamples++;
+        }
       }
     }
 
-    // Row 2: 4 dots/keys
-    if (y >= row2Y && y < row2Y + keyH) {
-      for (let i = 0; i < 4; i++) {
-        const kx = left + (2.5 + i * 2.8) * scale;
-        if (x >= kx && x < kx + 1.8 * scale) return [0, 0, 0, 255];
-      }
-    }
-
-    // Row 3: spacebar in middle, 2 side keys
-    if (y >= row3Y && y < row3Y + keyH) {
-      // Left key
-      if (x >= left + 2.5 * scale && x < left + 3.8 * scale) return [0, 0, 0, 255];
-      // Spacebar
-      if (x >= left + 4.6 * scale && x < left + 9.4 * scale) return [0, 0, 0, 255];
-      // Right key
-      if (x >= left + 10.2 * scale && x < left + 11.5 * scale) return [0, 0, 0, 255];
-    }
-
-    return [0, 0, 0, 0];
+    const alpha = Math.round((totalSamples / (SUB * SUB)) * 255);
+    return [0, 0, 0, alpha]; // Template image: pure black with alpha channel
   });
 }
 
-const assetsDir = path.join(__dirname, '..', 'src', 'assets');
-if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
+/**
+ * Pure SVG vector representation of the status bar icon.
+ */
+function generateTraySvg() {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- Open Maicong Status Bar Vector Template (Vector conversion of App Icon) -->
+  <path fill-rule="evenodd" fill="currentColor" d="
+    M 4.8 1.4
+    C 2.2 1.4, 1.4 2.2, 1.4 4.8
+    L 1.4 11.2
+    C 1.4 13.8, 2.2 14.6, 4.8 14.6
+    L 11.2 14.6
+    C 13.8 14.6, 14.6 13.8, 14.6 11.2
+    L 14.6 4.8
+    C 14.6 2.2, 13.8 1.4, 11.2 1.4
+    Z
+    M 5.0 2.6
+    C 3.0 2.6, 2.6 3.0, 2.6 5.0
+    L 2.6 11.0
+    C 2.6 13.0, 3.0 13.4, 5.0 13.4
+    L 11.0 13.4
+    C 13.0 13.4, 13.4 13.0, 13.4 11.0
+    L 13.4 5.0
+    C 13.4 3.0, 13.0 2.6, 11.0 2.6
+    Z
+  "/>
+  <rect x="5.2" y="5.2" width="1.4" height="5.6" rx="0.3" fill="currentColor"/>
+  <rect x="9.4" y="5.2" width="1.4" height="5.6" rx="0.3" fill="currentColor"/>
+  <polygon points="6.2,8.4 8.0,6.5 9.8,8.4 8.0,7.3" fill="currentColor"/>
+</svg>
+`.trim();
+}
 
-const png1x = drawKeyboardIcon(1);
-const png2x = drawKeyboardIcon(2);
+function build() {
+  const assetsDir = path.join(__dirname, '..', 'src', 'assets');
+  if (!fs.existsSync(assetsDir)) fs.mkdirSync(assetsDir, { recursive: true });
 
-fs.writeFileSync(path.join(assetsDir, 'trayTemplate.png'), png1x);
-fs.writeFileSync(path.join(assetsDir, 'trayTemplate@2x.png'), png2x);
-console.log('Successfully generated trayTemplate.png (16x16) and trayTemplate@2x.png (32x32).');
+  console.log('[Tray] Generating vector template status bar assets from app icon…');
+
+  const png1x = renderTrayTemplatePng(16);
+  const png2x = renderTrayTemplatePng(32);
+  const svg = generateTraySvg();
+
+  fs.writeFileSync(path.join(assetsDir, 'trayTemplate.png'), png1x);
+  fs.writeFileSync(path.join(assetsDir, 'trayTemplate@2x.png'), png2x);
+  fs.writeFileSync(path.join(assetsDir, 'trayTemplate.svg'), svg);
+
+  console.log('[Tray] Wrote trayTemplate.png (16x16)');
+  console.log('[Tray] Wrote trayTemplate@2x.png (32x32)');
+  console.log('[Tray] Wrote trayTemplate.svg (Vector SVG)');
+}
+
+build();

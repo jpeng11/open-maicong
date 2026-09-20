@@ -41,8 +41,14 @@ test('i18n contains Cancel Edit and Software Update strings in zh and en', () =>
 test('Tray template icons exist and conform to macOS menu bar icon standards', () => {
   const icon1x = path.join(__dirname, '..', 'src', 'assets', 'trayTemplate.png');
   const icon2x = path.join(__dirname, '..', 'src', 'assets', 'trayTemplate@2x.png');
+  const iconSvg = path.join(__dirname, '..', 'src', 'assets', 'trayTemplate.svg');
   assert.ok(fs.existsSync(icon1x), 'trayTemplate.png must exist');
   assert.ok(fs.existsSync(icon2x), 'trayTemplate@2x.png must exist');
+  assert.ok(fs.existsSync(iconSvg), 'trayTemplate.svg must exist');
+
+  // Verify SVG content
+  const svgContent = fs.readFileSync(iconSvg, 'utf8');
+  assert.ok(svgContent.includes('<svg') && svgContent.includes('viewBox="0 0 16 16"'));
 
   // Verify PNG headers
   const b1 = fs.readFileSync(icon1x);
