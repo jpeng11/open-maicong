@@ -15,7 +15,9 @@ const write = args.includes('--write');
 const caskArg = args.find((a) => !a.startsWith('--'));
 const caskPath = caskArg
   ? path.resolve(caskArg)
-  : path.join(root, 'Casks', 'maicong-studio.rb');
+  : (fs.existsSync(path.join(root, 'Casks', 'open-maicong.rb'))
+      ? path.join(root, 'Casks', 'open-maicong.rb')
+      : path.join(root, 'Casks', 'maicong-studio.rb'));
 
 function fail(message) {
   console.error(`[verify-cask] ${message}`);

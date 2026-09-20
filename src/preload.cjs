@@ -79,6 +79,8 @@ contextBridge.exposeInMainWorld('maicongApi', {
   cancelFirmware: (reason) => ipcRenderer.invoke('maicong:firmware-cancel', reason),
   dismissFirmwareReview: () => ipcRenderer.invoke('maicong:firmware-dismiss-review'),
   discardInterruptedFirmware: () => ipcRenderer.invoke('maicong:firmware-discard-interrupted'),
+  checkAppUpdate: () => ipcRenderer.invoke('maicong:check-app-update'),
+  downloadAppUpdate: (url) => ipcRenderer.invoke('maicong:download-app-update', url),
   onStateUpdate: (callback) => {
     const listener = (_event, state) => callback(state);
     ipcRenderer.on('maicong:state-update', listener);
@@ -88,6 +90,11 @@ contextBridge.exposeInMainWorld('maicongApi', {
     const listener = (_event, tab) => callback(tab);
     ipcRenderer.on('maicong:navigate-tab', listener);
     return () => ipcRenderer.removeListener('maicong:navigate-tab', listener);
+  },
+  onTriggerCheckUpdate: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on('maicong:trigger-check-update', listener);
+    return () => ipcRenderer.removeListener('maicong:trigger-check-update', listener);
   },
   onGifFrame: (callback) => {
     const listener = (_event, data) => callback(data);

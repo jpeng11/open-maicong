@@ -1,6 +1,7 @@
-const { app, BrowserWindow, ipcMain, Menu, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, dialog, shell, Tray, nativeImage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const https = require('node:https');
 const { pathToFileURL } = require('node:url');
 const { execFile } = require('node:child_process');
 const transport = require('./transport.cjs');
@@ -35,6 +36,8 @@ let win = null;
 let deviceWatcher = null;
 let firmwareSession = null;
 let appBindWatcher = null;
+let tray = null;
+let isQuitting = false;
 
 const smoke = process.argv.includes('--smoke-test');
 const mockUiTest = process.argv.includes('--mock-ui-test');
@@ -44,6 +47,42 @@ if (smoke || mockUiTest) {
   app.setPath('userData', path.join(app.getPath('temp'), `maicong-harness-${process.pid}`));
 } else if (isDev) {
   app.setPath('userData', path.join(app.getPath('appData'), 'open-maicong-dev'));
+}
+
+function migrateLegacyUserData() {
+  if (!app.isPackaged) return;
+  try {
+    const targetDir = app.getPath('userData');
+    const appData = app.getPath('appData');
+    const legacyDirs = [
+      path.join(appData, 'Maicong Studio'),
+      path.join(appData, 'open-maicong')
+    ];
+    const files = [
+      'locale.json',
+      'profile-library.json',
+      'profile-app-binds.json',
+      'macro-metadata.json',
+      'lighting-memory.json',
+      'still-library.json',
+      'gif-library.json'
+    ];
+    for (const legacyDir of legacyDirs) {
+      if (legacyDir === targetDir || !fs.existsSync(legacyDir)) continue;
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
+      for (const file of files) {
+        const src = path.join(legacyDir, file);
+        const dst = path.join(targetDir, file);
+        if (fs.existsSync(src) && !fs.existsSync(dst)) {
+          try {
+            fs.copyFileSync(src, dst);
+          } catch {}
+        }
+      }
+    }
+  } catch {}
 }
 
 function getCompleteState() {
@@ -144,7 +183,7 @@ function readFrontmostApp() {
 
 function createWindow() {
   win = new BrowserWindow({
-    title: isDev ? 'Maicong Studio (Dev)' : 'Maicong Studio',
+    title: isDev ? 'Open Maicong (Dev)' : 'Open Maicong',
     width: 1320,
     height: 900,
     minWidth: 1080,
@@ -225,6 +264,11 @@ function createWindow() {
     if (isFirmwareWriteInFlight()) {
       event.preventDefault();
       showFirmwareQuitWarning();
+      return;
+    }
+    if (!isQuitting && !isDevHarness) {
+      event.preventDefault();
+      win.hide();
     }
   });
 
@@ -271,6 +315,7 @@ ipcMain.handle('maicong:set-locale', (_event, locale) => {
     : writeStoredLocale(locale);
   i18n.setLocale(stored.locale);
   setupAppMenu();
+  setupTrayMenu();
   return { success: true, locale: stored.locale, persisted: stored.persisted };
 });
 
@@ -1370,20 +1415,265 @@ ipcMain.handle('maicong:export-official-profile', async (_event, spec) => {
   }
 });
 
+function showMainWindow() {
+  if (!win || win.isDestroyed()) {
+    createWindow();
+  } else {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  }
+}
+
+function compareSemver(v1, v2) {
+  const p1 = String(v1 || '').split('.').map((x) => parseInt(x, 10) || 0);
+  const p2 = String(v2 || '').split('.').map((x) => parseInt(x, 10) || 0);
+  for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
+    const num1 = p1[i] || 0;
+    const num2 = p2[i] || 0;
+    if (num1 > num2) return 1;
+    if (num1 < num2) return -1;
+  }
+  return 0;
+}
+
+function fetchLatestRelease() {
+  return new Promise((resolve) => {
+    const options = {
+      hostname: 'api.github.com',
+      path: '/repos/jpeng11/open-maicong/releases/latest',
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Open-Maicong-App',
+        'Accept': 'application/vnd.github.v3+json'
+      },
+      timeout: 10000
+    };
+
+    const req = https.request(options, (res) => {
+      if (res.statusCode !== 200) {
+        return resolve({ success: false, error: `GitHub API returned HTTP ${res.statusCode}`, currentVersion: app.getVersion() });
+      }
+
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data);
+          const tagName = String(parsed.tag_name || '').trim();
+          const cleanTag = tagName.replace(/^v/, '');
+          const currentVersion = app.getVersion();
+          const hasUpdate = compareSemver(cleanTag, currentVersion) > 0;
+
+          const assets = Array.isArray(parsed.assets) ? parsed.assets : [];
+          const dmgAsset = assets.find((a) => a && typeof a.name === 'string' && a.name.endsWith('.dmg'))
+            || assets.find((a) => a && typeof a.name === 'string' && a.name.endsWith('.zip'));
+
+          const downloadUrl = (dmgAsset && dmgAsset.browser_download_url) || parsed.html_url || 'https://github.com/jpeng11/open-maicong/releases/latest';
+
+          resolve({
+            success: true,
+            hasUpdate,
+            currentVersion,
+            latestVersion: cleanTag || currentVersion,
+            tagName: tagName || `v${cleanTag}`,
+            releaseName: parsed.name || tagName,
+            releaseNotes: parsed.body || '',
+            releaseUrl: parsed.html_url || 'https://github.com/jpeng11/open-maicong/releases/latest',
+            downloadUrl
+          });
+        } catch (err) {
+          resolve({ success: false, error: `Failed to parse release: ${err.message}`, currentVersion: app.getVersion() });
+        }
+      });
+    });
+
+    req.on('error', (err) => {
+      resolve({ success: false, error: err.message, currentVersion: app.getVersion() });
+    });
+
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({ success: false, error: 'Connection timed out', currentVersion: app.getVersion() });
+    });
+
+    req.end();
+  });
+}
+
+async function checkAppUpdateInteractive() {
+  showMainWindow();
+  const res = await fetchLatestRelease();
+  if (!res.success) {
+    dialog.showMessageBox(win, {
+      type: 'warning',
+      title: i18n.t('update.dialogErrorTitle', { default: 'Update Check Failed' }),
+      message: i18n.t('update.dialogErrorTitle', { default: 'Update Check Failed' }),
+      detail: i18n.t('update.dialogErrorMessage', { error: res.error, default: `Unable to check for updates: ${res.error}` }),
+      buttons: [i18n.t('dialog.ok', { default: 'OK' })]
+    });
+    return;
+  }
+
+  if (res.hasUpdate) {
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'info',
+      title: i18n.t('update.dialogTitle', { default: 'Update Available' }),
+      message: i18n.t('update.dialogMessage', { latest: res.latestVersion, default: `A new version of Open Maicong is available (v${res.latestVersion})` }),
+      detail: i18n.t('update.dialogDetail', { current: res.currentVersion, default: `Current version: v${res.currentVersion}\n\nWould you like to download it now?` }),
+      buttons: [
+        i18n.t('update.dialogDownload', { default: 'Download Update' }),
+        i18n.t('update.dialogLater', { default: 'Later' })
+      ],
+      defaultId: 0,
+      cancelId: 1
+    });
+    if (choice === 0 && res.downloadUrl) {
+      void shell.openExternal(res.downloadUrl);
+    }
+  } else {
+    dialog.showMessageBox(win, {
+      type: 'info',
+      title: i18n.t('update.dialogUpToDateTitle', { default: 'Up to Date' }),
+      message: i18n.t('update.dialogUpToDateMessage', { current: res.currentVersion, default: `Open Maicong is up to date (v${res.currentVersion}).` }),
+      buttons: [i18n.t('dialog.ok', { default: 'OK' })]
+    });
+  }
+}
+
+function buildTrayMenu() {
+  return Menu.buildFromTemplate([
+    {
+      label: i18n.t('tray.showWindow', { default: 'Show Main Window' }),
+      accelerator: 'CmdOrCtrl+M',
+      click: () => {
+        showMainWindow();
+      }
+    },
+    { type: 'separator' },
+    {
+      label: i18n.t('tray.settings', { default: 'Settings...' }),
+      accelerator: 'CmdOrCtrl+,',
+      click: () => {
+        showMainWindow();
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('maicong:navigate-tab', 'settings');
+        }
+      }
+    },
+    {
+      label: i18n.t('tray.about', { default: 'About Open Maicong' }),
+      click: () => {
+        showMainWindow();
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('maicong:navigate-tab', 'guide');
+        }
+      }
+    },
+    {
+      label: i18n.t('tray.checkUpdates', { default: 'Check for Updates...' }),
+      accelerator: 'CmdOrCtrl+U',
+      click: () => {
+        void checkAppUpdateInteractive();
+      }
+    },
+    { type: 'separator' },
+    {
+      label: i18n.t('tray.quit', { default: 'Quit Open Maicong' }),
+      accelerator: 'CmdOrCtrl+Q',
+      click: () => {
+        if (isFirmwareWriteInFlight()) {
+          showFirmwareQuitWarning();
+          return;
+        }
+        isQuitting = true;
+        app.quit();
+      }
+    }
+  ]);
+}
+
+function setupTray() {
+  if (tray) return;
+  const icon1x = path.join(__dirname, 'assets', 'trayTemplate.png');
+  const icon2x = path.join(__dirname, 'assets', 'trayTemplate@2x.png');
+  let trayImage;
+  if (fs.existsSync(icon1x)) {
+    trayImage = nativeImage.createFromPath(icon1x);
+    if (fs.existsSync(icon2x)) {
+      trayImage.addRepresentation({
+        scaleFactor: 2.0,
+        buffer: fs.readFileSync(icon2x)
+      });
+    }
+    trayImage.setTemplateImage(true);
+  } else {
+    trayImage = nativeImage.createEmpty();
+  }
+
+  tray = new Tray(trayImage);
+  tray.setToolTip('Open Maicong');
+  tray.setContextMenu(buildTrayMenu());
+
+  tray.on('click', () => {
+    showMainWindow();
+  });
+  tray.on('double-click', () => {
+    showMainWindow();
+  });
+}
+
+function setupTrayMenu() {
+  if (tray) {
+    tray.setContextMenu(buildTrayMenu());
+  }
+}
+
+ipcMain.handle('maicong:check-app-update', async () => {
+  return fetchLatestRelease();
+});
+
+ipcMain.handle('maicong:download-app-update', async (_event, url) => {
+  if (url && (url.startsWith('https://') || url.startsWith('http://'))) {
+    void shell.openExternal(url);
+    return { success: true };
+  }
+  return { success: false, error: 'Invalid download URL' };
+});
+
 function setupAppMenu() {
   const isMac = process.platform === 'darwin';
   const template = [
     ...(isMac ? [{
-      label: 'Maicong Studio',
+      label: 'Open Maicong',
       submenu: [
         {
           label: i18n.t('menu.about'),
           click: () => {
             dialog.showMessageBox(win, {
               title: i18n.t('menu.about'),
-              message: 'Maicong Studio',
+              message: 'Open Maicong',
               detail: i18n.t('menu.aboutDetail', { version: app.getVersion() })
             });
+          }
+        },
+        {
+          label: i18n.t('tray.checkUpdates', { default: 'Check for Updates...' }),
+          accelerator: 'CmdOrCtrl+U',
+          click: () => {
+            void checkAppUpdateInteractive();
+          }
+        },
+        { type: 'separator' },
+        {
+          label: i18n.t('tray.settings', { default: 'Settings...' }),
+          accelerator: 'CmdOrCtrl+,',
+          click: () => {
+            showMainWindow();
+            if (win && !win.isDestroyed()) {
+              win.webContents.send('maicong:navigate-tab', 'settings');
+            }
           }
         },
         { type: 'separator' },
@@ -1393,7 +1683,18 @@ function setupAppMenu() {
         { role: 'hideOthers' },
         { role: 'unhide' },
         { type: 'separator' },
-        { role: 'quit' }
+        {
+          label: i18n.t('tray.quit', { default: 'Quit Open Maicong' }),
+          accelerator: 'CmdOrCtrl+Q',
+          click: () => {
+            if (isFirmwareWriteInFlight()) {
+              showFirmwareQuitWarning();
+              return;
+            }
+            isQuitting = true;
+            app.quit();
+          }
+        }
       ]
     }] : []),
     { role: 'editMenu' },
@@ -1418,9 +1719,16 @@ function setupAppMenu() {
         {
           label: i18n.t('menu.guide'),
           click: () => {
+            showMainWindow();
             if (win && !win.isDestroyed()) {
               win.webContents.send('maicong:navigate-tab', 'guide');
             }
+          }
+        },
+        {
+          label: i18n.t('tray.checkUpdates', { default: 'Check for Updates...' }),
+          click: () => {
+            void checkAppUpdateInteractive();
           }
         }
       ]
@@ -1440,7 +1748,7 @@ process.on('uncaughtException', (err) => {
     // Cleanup must not mask the original error.
   }
   if (app.isReady()) {
-    dialog.showErrorBox('Maicong Studio encountered an unexpected error', String((err && err.stack) || err));
+    dialog.showErrorBox('Open Maicong encountered an unexpected error', String((err && err.stack) || err));
   }
   process.exit(1);
 });
@@ -1449,15 +1757,16 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (win) {
-      if (win.isMinimized()) win.restore();
-      win.focus();
-    }
+    showMainWindow();
   });
 
   app.whenReady().then(async () => {
+    migrateLegacyUserData();
     i18n.setLocale(readStoredLocale());
     setupAppMenu();
+    if (!isDevHarness) {
+      setupTray();
+    }
 
     if (mockUiTest && !app.isPackaged) {
       const { MockGlwMemoryDevice } = require(path.join(__dirname, '..', 'test', 'mock-glw-memory.cjs'));
@@ -1520,9 +1829,7 @@ if (!app.requestSingleInstanceLock()) {
     }
 
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow();
-      }
+      showMainWindow();
     });
 
     if (mockUiTest && !app.isPackaged) {
@@ -1584,13 +1891,13 @@ if (!app.requestSingleInstanceLock()) {
       })();
     }
   }).catch((err) => {
-    console.error('[Startup] Failed to initialize Maicong Studio:', err);
+    console.error('[Startup] Failed to initialize Open Maicong:', err);
     try {
       if (!isFirmwareWriteInFlight()) transport.disconnect();
     } catch {
       // Startup is already aborting; cleanup must not throw again.
     }
-    dialog.showErrorBox('Maicong Studio failed to start', String((err && err.stack) || err));
+    dialog.showErrorBox('Open Maicong failed to start', String((err && err.stack) || err));
     app.exit(1);
   });
 
@@ -1600,13 +1907,18 @@ if (!app.requestSingleInstanceLock()) {
       showFirmwareQuitWarning();
       return;
     }
+    isQuitting = true;
     deviceWatcher?.stop();
     if (appBindWatcher) appBindWatcher.stop();
+    if (tray) {
+      tray.destroy();
+      tray = null;
+    }
     transport.disconnect();
   });
 
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') {
+    if (process.platform !== 'darwin' || isDevHarness) {
       app.quit();
     }
   });

@@ -12,7 +12,7 @@
     "test": "node --test test/*.test.cjs",
     "test:mock-ui": "electron . --mock-ui-test",
     "smoke": "electron . --smoke-test",
-    "icon": "node scripts/generate-icon.cjs",
+    "icon": "node scripts/generate-icon.cjs && node scripts/generate-tray-icons.cjs",
     "pack": "npm run icon && electron-builder --mac --dir",
     "dist": "npm run icon && electron-builder --mac dmg zip && node scripts/verify-cask.cjs"
   },
@@ -22,7 +22,7 @@
   },
   "build": {
     "appId": "dev.openmaicong.studio",
-    "productName": "Maicong Studio",
+    "productName": "Open Maicong",
     "npmRebuild": false,
     "files": [
       "src/**/*",
@@ -33,7 +33,7 @@
     "directories": {
       "output": "dist"
     },
-    "artifactName": "Maicong-Studio-${version}-${arch}.${ext}",
+    "artifactName": "Open-Maicong-${version}-${arch}.${ext}",
     "afterPack": "scripts/adhoc-sign.cjs",
     "mac": {
       "category": "public.app-category.utilities",

@@ -47,7 +47,7 @@ async function run({ app, getWindow, getState }) {
   const appTitle = await win.webContents.executeJavaScript(
     "document.querySelector('.app-title')?.textContent?.trim()"
   );
-  assert.match(appTitle || '', /Maicong Studio/i, 'Title must be Maicong Studio');
+  assert.match(appTitle || '', /Open Maicong/i, 'Title must be Open Maicong');
 
   const tabCount = await win.webContents.executeJavaScript(
     "document.querySelectorAll('.view-tabs .tab').length"

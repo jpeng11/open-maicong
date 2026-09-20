@@ -596,6 +596,12 @@ document.addEventListener('click', async event => {
     await handleLoadEditTarget();
   } else if (action === 'load-edit-target') {
     await handleLoadEditTarget();
+  } else if (action === 'cancel-edit') {
+    await handleCancelEdit();
+  } else if (action === 'check-app-update') {
+    await handleCheckAppUpdate();
+  } else if (action === 'download-app-update') {
+    await handleDownloadAppUpdate();
   } else if (action === 'activate-edit-profile') {
     await handleActivateEditProfile();
   } else if (action === 'enable-fourth-profile') {
@@ -1214,6 +1220,7 @@ function renderDashboardProfiles() {
       <div class="dash-slot-actions">
         ${enabled && !isActive ? `<button type="button" class="action-btn sm primary" data-action="switch-profile" data-profile="${i}">${t('profile.activate')}</button>` : ''}
         ${enabled && !isEditing ? `<button type="button" class="action-btn sm" data-action="load-edit-profile" data-profile="${i}">${t('sidebar.loadEdit')}</button>` : ''}
+        ${enabled && isEditing && (state.editingProfile !== state.activeProfile || isLocalPreview()) ? `<button type="button" class="action-btn sm" data-action="cancel-edit">${t('sidebar.cancelEdit')}</button>` : ''}
         ${!enabled ? `<button type="button" class="action-btn sm" data-action="enable-fourth-profile">${t('profile.enable4')}</button>` : ''}
       </div>
     `;
@@ -1376,6 +1383,7 @@ function renderProfileLibrary() {
         </div>
         <div class="profile-card-actions profile-menu-dropdown" role="menu">
           ${enabled && !isEditing ? `<button class="action-btn menu-item" data-action="load-edit-profile" data-profile="${i}"><svg class="line-icon sm"><use href="#i-edit"/></svg><span>${t('sidebar.loadEdit')}</span></button>` : ''}
+          ${enabled && isEditing && (state.editingProfile !== state.activeProfile || isLocalPreview()) ? `<button class="action-btn menu-item" data-action="cancel-edit"><svg class="line-icon sm"><use href="#i-refresh"/></svg><span>${t('sidebar.cancelEdit')}</span></button>` : ''}
           ${enabled && !isActive ? `<button class="action-btn menu-item" data-action="switch-profile" data-profile="${i}"><svg class="line-icon sm"><use href="#i-radio"/></svg><span>${t('sidebar.activate')}</span></button>` : ''}
           ${enabled ? `<button class="action-btn menu-item" data-action="copy-onboard-local" data-profile="${i}"><svg class="line-icon sm"><use href="#i-copy"/></svg><span>${t('profile.copy')}</span></button>
           <button class="action-btn menu-item" data-action="rename-profile" data-kind="keyboard" data-key="KeyboardProfile@keyboard@${i}" data-profile="${i}" data-name="${escapeAttr(onboardName(i))}"><svg class="line-icon sm"><use href="#i-edit"/></svg><span>${t('profile.rename')}</span></button>
@@ -1432,6 +1440,7 @@ function renderProfileLibrary() {
           </div>
         </div>
         <div class="profile-card-actions profile-menu-dropdown" role="menu">
+          ${preview ? `<button class="action-btn menu-item" data-action="cancel-edit"><svg class="line-icon sm"><use href="#i-refresh"/></svg><span>${t('sidebar.cancelEdit')}</span></button>` : ''}
           <button class="action-btn menu-item" data-action="move-local-onboard" data-key="${escapeAttr(item.key)}" data-activate="true"><svg class="line-icon sm"><use href="#i-keyboard"/></svg><span>${t('profile.moveOnboard')}</span></button>
           <button class="action-btn menu-item" data-action="rename-profile" data-kind="local" data-key="${escapeAttr(item.key)}" data-name="${escapeAttr(localizeProfileName(item.name))}"><svg class="line-icon sm"><use href="#i-edit"/></svg><span>${t('profile.rename')}</span></button>
           <button class="action-btn menu-item" data-action="export-official-profile" data-kind="local" data-key="${escapeAttr(item.key)}"><svg class="line-icon sm"><use href="#i-upload"/></svg><span>${t('profile.export')}</span></button>
@@ -8227,6 +8236,19 @@ function renderEditTargetBar() {
     const count = state.base?.profileCount || 3;
     enableBtn.disabled = count >= 4;
   }
+  const cancelBtn = document.getElementById('btn-cancel-edit');
+  if (cancelBtn) {
+    const isDifferent = isLocalPreview() || state.editingProfile !== state.activeProfile;
+    cancelBtn.hidden = !isDifferent;
+  }
+}
+
+async function handleCancelEdit() {
+  const sel = document.getElementById('edit-profile-select');
+  if (sel) {
+    sel.value = String(state.activeProfile);
+  }
+  return handleLoadEditTarget();
 }
 
 async function handleLoadEditTarget() {
@@ -9734,10 +9756,82 @@ async function init() {
     });
   }
 
+  if (typeof api.onTriggerCheckUpdate === 'function') {
+    api.onTriggerCheckUpdate(() => {
+      switchTab('others');
+      void handleCheckAppUpdate();
+    });
+  }
+
   // Initial scan and load
   await scanHardware();
   await refreshLightingMemoryPref();
   void refreshInterruptedFirmware({ announce: true });
+}
+
+let latestUpdateData = null;
+
+async function handleCheckAppUpdate() {
+  const statusEl = document.getElementById('app-update-status');
+  const latestEl = document.getElementById('app-latest-version');
+  const currentEl = document.getElementById('app-current-version');
+  const downloadBtn = document.getElementById('btn-download-app-update');
+  const checkBtn = document.getElementById('btn-check-app-update');
+  if (statusEl) {
+    statusEl.textContent = t('update.checking', { default: 'Checking for updates…' });
+    statusEl.className = 'field-hint';
+  }
+  if (checkBtn) checkBtn.disabled = true;
+
+  try {
+    const res = await api.checkAppUpdate();
+    latestUpdateData = res;
+    if (res && res.currentVersion && currentEl) {
+      currentEl.textContent = `v${res.currentVersion}`;
+    }
+    if (latestEl && res && res.latestVersion) {
+      latestEl.textContent = `v${res.latestVersion}`;
+    }
+    if (!res || !res.success) {
+      const errMsg = (res && res.error) || 'Failed';
+      if (statusEl) {
+        statusEl.textContent = t('update.error', { error: errMsg, default: `Update check failed: ${errMsg}` });
+        statusEl.className = 'field-hint text-error';
+      }
+      showToast(t('update.error', { error: errMsg, default: `Update check failed: ${errMsg}` }), 'error');
+      return;
+    }
+
+    if (res.hasUpdate) {
+      if (statusEl) {
+        statusEl.textContent = t('update.available', { version: res.latestVersion, default: `New version v${res.latestVersion} is available!` });
+        statusEl.className = 'field-hint text-success';
+      }
+      if (downloadBtn) downloadBtn.hidden = false;
+      showToast(t('update.available', { version: res.latestVersion, default: `New version v${res.latestVersion} is available!` }), 'success');
+    } else {
+      if (statusEl) {
+        statusEl.textContent = t('update.latest', { version: res.currentVersion, default: `You have the latest version (v${res.currentVersion})` });
+        statusEl.className = 'field-hint text-success';
+      }
+      if (downloadBtn) downloadBtn.hidden = true;
+      showToast(t('update.latest', { version: res.currentVersion, default: `You have the latest version (v${res.currentVersion})` }), 'info');
+    }
+  } catch (err) {
+    if (statusEl) {
+      statusEl.textContent = t('update.error', { error: err.message, default: `Update check failed: ${err.message}` });
+      statusEl.className = 'field-hint text-error';
+    }
+  } finally {
+    if (checkBtn) checkBtn.disabled = false;
+  }
+}
+
+async function handleDownloadAppUpdate() {
+  const url = latestUpdateData && (latestUpdateData.downloadUrl || latestUpdateData.releaseUrl);
+  if (url) {
+    await api.downloadAppUpdate(url);
+  }
 }
 
 function editorSnapshot() {
@@ -10049,7 +10143,7 @@ function editorSnapshot() {
     keymapSubtitle: document.querySelector('#panel-keymap .subtitle')?.textContent?.trim() || '',
     keymapSelectedTitle: document.querySelector('#panel-keymap .selected-key-card h3')?.textContent?.trim() || '',
     lightingBrightnessLabel: document.querySelector('label[for="light-brightness-slider"]')?.textContent?.trim() || '',
-    factoryResetTitle: document.querySelector('#panel-others .dash-card:last-child h2')?.textContent?.trim() || '',
+    factoryResetTitle: document.querySelector('#panel-others [data-i18n="others.reset"]')?.textContent?.trim() || document.querySelector('#panel-others .dash-card:last-child h2')?.textContent?.trim() || '',
     backupTitle: document.querySelector('#panel-profiles h1')?.textContent?.trim() || '',
     lightingMemoryHint: document.getElementById('lighting-memory-hint')?.textContent?.trim() || '',
     deviceStatusText: document.getElementById('device-status-text')?.textContent?.trim() || '',

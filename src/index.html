@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
-  <title>Maicong Studio — G75 V2 Configurator</title>
+  <title>Open Maicong — G75 V2 Configurator</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -33,7 +33,7 @@
 
   <header id="main-header" class="os-titlebar">
     <div class="title-brand">
-      <span class="app-title">Maicong Studio</span>
+      <span class="app-title">Open Maicong</span>
       <span class="edition" data-i18n="app.edition">Unofficial G75 V2</span>
     </div>
     <div class="titlebar-actions">
@@ -79,6 +79,7 @@
             <option value="3">Profile 4</option>
           </select>
           <button class="action-btn" id="btn-load-edit-target" data-action="load-edit-target" data-i18n="sidebar.loadEdit">Load for editing</button>
+          <button class="action-btn" id="btn-cancel-edit" data-action="cancel-edit" data-i18n="sidebar.cancelEdit" hidden>Cancel Edit</button>
           <button class="action-btn primary" id="btn-activate-profile" data-action="activate-edit-profile" data-i18n="sidebar.activate">Activate on keyboard</button>
           <button class="action-btn" id="btn-enable-fourth" data-action="enable-fourth-profile" data-i18n="sidebar.enableFourth">Enable 4th profile</button>
         </div>
@@ -1003,6 +1004,29 @@
 
         <div class="dash-card">
           <div class="dash-card-header">
+            <span class="card-icon"><svg class="line-icon"><use href="#i-refresh"/></svg></span>
+            <h2 data-i18n="others.appUpdate">Software update</h2>
+          </div>
+          <p class="card-desc" data-i18n="others.appUpdateDesc">Check GitHub for the latest release and download updates directly.</p>
+          <div class="stat-grid" style="margin-bottom: 12px;">
+            <div class="stat-row">
+              <span class="stat-label" data-i18n="others.currentVersion">Current version</span>
+              <span id="app-current-version" class="stat-value font-mono">v0.1.0</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label" data-i18n="others.latestVersion">Latest release</span>
+              <span id="app-latest-version" class="stat-value font-mono">--</span>
+            </div>
+          </div>
+          <p id="app-update-status" class="field-hint"></p>
+          <div class="panel-header-actions" style="margin-top: 12px;">
+            <button class="action-btn" data-action="check-app-update" id="btn-check-app-update" data-i18n="others.checkUpdate">Check for updates</button>
+            <button class="action-btn primary" data-action="download-app-update" id="btn-download-app-update" data-i18n="others.downloadUpdate" hidden>Download update</button>
+          </div>
+        </div>
+
+        <div class="dash-card">
+          <div class="dash-card-header">
             <span class="card-icon"><svg class="line-icon"><use href="#i-tool"/></svg></span>
             <h2 data-i18n="others.reset">Factory reset</h2>
           </div>
@@ -1137,7 +1161,7 @@
         <!-- Architecture Callout -->
         <div class="dash-card full-width">
           <h2 data-i18n="guide.archTitle">100% Offline Architecture</h2>
-          <p data-i18n="guide.archIntro">Unlike the vendor web configurator which requires online cloud bundles, telemetry, and WebHID browser tabs, Maicong Studio is built from the ground up as a native macOS utility:</p>
+          <p data-i18n="guide.archIntro">Unlike the vendor web configurator which requires online cloud bundles, telemetry, and WebHID browser tabs, Open Maicong is built from the ground up as a native macOS utility:</p>
           <ul class="guide-bullets">
             <li data-i18n="guide.archCsp">Zero Remote Network Requests: Content Security Policy strictly enforces connect-src 'none'. No analytics, tracking, or remote JS.</li>
             <li data-i18n="guide.archHid">Pure Native Node-HID: Direct connection to macOS IOKit USB HID endpoints via node-hid.</li>
