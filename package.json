@@ -23,6 +23,7 @@
   "build": {
     "appId": "dev.openmaicong.studio",
     "productName": "Maicong Studio",
+    "npmRebuild": false,
     "files": [
       "src/**/*",
       "package.json",
