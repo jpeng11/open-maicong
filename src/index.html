@@ -79,7 +79,6 @@
             <option value="3">Profile 4</option>
           </select>
           <button class="action-btn" id="btn-load-edit-target" data-action="load-edit-target" data-i18n="sidebar.loadEdit">Load for editing</button>
-          <button class="action-btn" id="btn-cancel-edit" data-action="cancel-edit" data-i18n="sidebar.cancelEdit" hidden>Cancel Edit</button>
           <button class="action-btn primary" id="btn-activate-profile" data-action="activate-edit-profile" data-i18n="sidebar.activate">Activate on keyboard</button>
           <button class="action-btn" id="btn-enable-fourth" data-action="enable-fourth-profile" data-i18n="sidebar.enableFourth">Enable 4th profile</button>
         </div>
@@ -87,6 +86,10 @@
           <span id="hardware-active-label">Hardware active: Profile 1</span>
           <span class="sep">·</span>
           <span id="editing-label">Editing: Profile 1</span>
+          <button type="button" class="action-btn sm cancel-edit-btn" id="btn-cancel-edit" data-action="cancel-edit" data-i18n-title="sidebar.cancelEdit" title="Cancel Edit" hidden>
+            <svg class="line-icon sm"><use href="#i-refresh"/></svg>
+            <span data-i18n="sidebar.cancelEdit">Cancel Edit</span>
+          </button>
         </div>
         <div id="active-profile-stat" class="edit-target-status">
           <span id="profile-stat-text">Profile 1</span>
@@ -164,6 +167,22 @@
         <div id="toast-banner" class="toast-banner" hidden>
           <span id="toast-icon" class="toast-icon" aria-hidden="true"></span>
           <span id="toast-message">Message</span>
+        </div>
+
+        <div id="editing-mode-banner" class="editing-mode-banner" hidden>
+          <div class="editing-banner-content">
+            <svg class="line-icon"><use href="#i-edit"/></svg>
+            <span id="editing-banner-text">Currently editing: Profile 2 (Hardware active: Profile 1)</span>
+          </div>
+          <div class="editing-banner-actions">
+            <button type="button" class="action-btn sm cancel-edit-btn" data-action="cancel-edit" data-i18n-title="sidebar.cancelEdit">
+              <svg class="line-icon sm"><use href="#i-refresh"/></svg>
+              <span data-i18n="sidebar.cancelEdit">Cancel Edit</span>
+            </button>
+            <button type="button" class="action-btn sm primary" data-action="activate-edit-profile" data-i18n="sidebar.activate">
+              Activate on keyboard
+            </button>
+          </div>
         </div>
 
     <!-- TAB 1: DASHBOARD -->

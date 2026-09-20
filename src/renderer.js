@@ -1375,6 +1375,7 @@ function renderProfileLibrary() {
               : t('profile.notEnabledDesc')}</p>
           </div>
           <div class="profile-controls">
+            ${enabled && isEditing && (state.editingProfile !== state.activeProfile || isLocalPreview()) ? `<button type="button" class="action-btn sm cancel-edit-btn" data-action="cancel-edit" title="${t('sidebar.cancelEdit')}"><svg class="line-icon sm"><use href="#i-refresh"/></svg><span>${t('sidebar.cancelEdit')}</span></button>` : ''}
             <button class="action-btn select-profile-btn ${isActive ? 'active' : ''}" data-action="switch-profile" data-profile="${i}" ${!enabled || isActive ? 'disabled' : ''}>${isActive ? t('profile.active') : (enabled ? t('profile.activate') : t('profile.notEnabled'))}</button>
             <button type="button" class="profile-more-btn" data-action="toggle-profile-menu" data-profile="${i}" aria-label="${t('common.moreOptions') || 'More options'}" title="${t('common.moreOptions') || 'More options'}">
               <svg class="line-icon sm"><use href="#i-more"/></svg>
@@ -1433,6 +1434,7 @@ function renderProfileLibrary() {
             <p class="profile-desc">${t('profile.localDesc')}</p>
           </div>
           <div class="profile-controls">
+            ${preview ? `<button type="button" class="action-btn sm cancel-edit-btn" data-action="cancel-edit" title="${t('sidebar.cancelEdit')}"><svg class="line-icon sm"><use href="#i-refresh"/></svg><span>${t('sidebar.cancelEdit')}</span></button>` : ''}
             <button class="action-btn select-profile-btn ${preview ? 'active' : ''}" data-action="load-local-preview" data-key="${escapeAttr(item.key)}">${preview ? t('profile.previewingStatus') || t('profile.preview') : t('profile.loadPreview')}</button>
             <button type="button" class="profile-more-btn" data-action="toggle-profile-menu" data-key="${escapeAttr(item.key)}" aria-label="${t('common.moreOptions') || 'More options'}" title="${t('common.moreOptions') || 'More options'}">
               <svg class="line-icon sm"><use href="#i-more"/></svg>
@@ -8236,10 +8238,31 @@ function renderEditTargetBar() {
     const count = state.base?.profileCount || 3;
     enableBtn.disabled = count >= 4;
   }
+  const isDifferent = isLocalPreview() || state.editingProfile !== state.activeProfile;
   const cancelBtn = document.getElementById('btn-cancel-edit');
   if (cancelBtn) {
-    const isDifferent = isLocalPreview() || state.editingProfile !== state.activeProfile;
     cancelBtn.hidden = !isDifferent;
+  }
+  const banner = document.getElementById('editing-mode-banner');
+  const bannerText = document.getElementById('editing-banner-text');
+  if (banner) {
+    banner.hidden = !isDifferent;
+    if (isDifferent && bannerText) {
+      if (isLocalPreview()) {
+        const previewName = state.localPreviewTarget?.name || t('profile.customDraft');
+        bannerText.textContent = t('sidebar.previewBanner', {
+          name: previewName,
+          hw: state.activeProfile + 1,
+          default: `Currently previewing local profile: ${previewName} (Hardware active: Profile ${state.activeProfile + 1})`
+        });
+      } else {
+        bannerText.textContent = t('sidebar.editBanner', {
+          edit: state.editingProfile + 1,
+          hw: state.activeProfile + 1,
+          default: `Currently editing: Profile ${state.editingProfile + 1} (Hardware active: Profile ${state.activeProfile + 1})`
+        });
+      }
+    }
   }
 }
 

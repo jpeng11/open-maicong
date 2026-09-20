@@ -343,6 +343,89 @@ header.os-titlebar {
   display: none;
 }
 
+.cancel-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sidebar-edit #btn-cancel-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  height: 22px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  cursor: pointer;
+  margin-left: 2px;
+  transition: all 0.15s ease;
+}
+
+.sidebar-edit #btn-cancel-edit:hover {
+  background: rgba(255, 77, 79, 0.15);
+  border-color: rgba(255, 77, 79, 0.4);
+  color: #ff4d4f;
+}
+
+.profile-controls .cancel-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  height: 24px;
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(255, 77, 79, 0.12);
+  border: 1px solid rgba(255, 77, 79, 0.35);
+  color: #ff4d4f;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.profile-controls .cancel-edit-btn:hover {
+  background: rgba(255, 77, 79, 0.22);
+  border-color: #ff4d4f;
+}
+
+.editing-mode-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  margin: 12px 24px 0;
+  background: rgba(0, 83, 226, 0.08);
+  border: 1px solid rgba(0, 83, 226, 0.25);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.editing-banner-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.editing-banner-content .line-icon {
+  color: var(--theme-color);
+  flex-shrink: 0;
+}
+
+.editing-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .sidebar-profiles {
   flex: 1;
   min-height: 0;
