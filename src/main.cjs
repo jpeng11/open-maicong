@@ -100,8 +100,8 @@ function getCompleteState() {
     activeProfileIndex: tState.activeProfileIndex,
     isStandby: transport.isStandby,
     needsReconnect: transport.needsReconnect,
-    statusError: tState.statusError || null,
-    readSuccess: tState.readSuccess !== false,
+    statusError: transport.statusError || tState.statusError || null,
+    readSuccess: transport.lastReadSuccess !== false && tState.readSuccess !== false,
     lighting: tState.lighting,
     settings: tState.settings,
     keymaps: tState.keymaps,
@@ -381,7 +381,10 @@ ipcMain.handle('maicong:scan', async () => {
     }
     const connectRes = transport.connect();
     if (connectRes.success) {
-      await transport.queryStatus();
+      const status = await transport.queryStatus();
+      if (!status || !status.readSuccess || status.needsReconnect || transport.needsReconnect) {
+        transport.disconnect();
+      }
     }
     broadcastState();
   }
@@ -407,7 +410,15 @@ ipcMain.handle('maicong:connect', async (_event, targetPath) => {
   }
   const res = transport.connect(targetPath);
   if (res.success) {
-    await transport.queryStatus();
+    const status = await transport.queryStatus();
+    if (!status || !status.readSuccess || status.needsReconnect || transport.needsReconnect) {
+      transport.disconnect();
+      broadcastState();
+      return {
+        success: false,
+        error: (status && status.statusError) || transport.statusError || 'Handshake failed: keyboard connection timed out'
+      };
+    }
   }
   broadcastState();
   return res;
@@ -1821,7 +1832,10 @@ if (!app.requestSingleInstanceLock()) {
           }
           const connectRes = transport.connect();
           if (connectRes.success) {
-            await transport.queryStatus();
+            const status = await transport.queryStatus();
+            if (!status || !status.readSuccess || status.needsReconnect || transport.needsReconnect) {
+              transport.disconnect();
+            }
           }
         }
         broadcastState();

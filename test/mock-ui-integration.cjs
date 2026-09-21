@@ -1420,6 +1420,10 @@ async function run({ app, getWindow, getMock }) {
   assert.strictEqual(afterFailApply.lightingSaveStatus, 'error');
   assert.strictEqual(afterFailApply.lightingTileDisabled, true);
   assert.strictEqual(afterFailApply.lightingBrightness, 30);
+  assert.strictEqual(afterFailApply.onboardProfileDirty, true, 'dirty draft must mark onboard profile as dirty');
+  assert.strictEqual(afterFailApply.onboardEditingTags, 1, 'dirty onboard profile must show editing tag');
+  assert.strictEqual(afterFailApply.onboardCancelEditButtons, 1, 'dirty onboard profile must expose cancel edit button');
+  assert.strictEqual(afterFailApply.targetBarCancelEditHidden, false, 'dirty onboard profile must show cancel edit button in target bar');
   mock.func[9] = 55;
   await win.webContents.executeJavaScript('document.getElementById("btn-refresh")?.click()');
   await sleep(700);
@@ -1439,11 +1443,19 @@ async function run({ app, getWindow, getMock }) {
   assert.strictEqual(afterFailRecoverRead.lightingSaveBlocked, true);
   assert.strictEqual(afterFailRecoverRead.lightingRetryHidden, false);
   assert.strictEqual(afterFailRecoverRead.lightingSaveStatus, 'unsaved');
+  assert.strictEqual(afterFailRecoverRead.onboardProfileDirty, true, 'retained draft after read must keep onboard profile dirty');
+  assert.strictEqual(afterFailRecoverRead.onboardEditingTags, 1, 'retained draft must keep editing tag visible');
+  assert.strictEqual(afterFailRecoverRead.targetBarCancelEditHidden, false, 'retained draft must keep target bar cancel edit button visible');
   assert.strictEqual(mock.func[9], 55, 'Read must not automatically resend the failed draft');
   await win.webContents.executeJavaScript('document.getElementById("btn-retry-lighting-save")?.click()');
   await waitLightingIdle();
   assert.strictEqual(mock.func[9], 30, 'Retry must deliberately resend the kept desired value');
-  assert.strictEqual((await snapshot()).lightingSaveBlocked, false);
+  const afterLightingRetry = await snapshot();
+  assert.strictEqual(afterLightingRetry.lightingSaveBlocked, false);
+  assert.strictEqual(afterLightingRetry.onboardProfileDirty, false, 'successful retry must clear onboard dirty state');
+  assert.strictEqual(afterLightingRetry.onboardEditingTags, 0, 'clean onboard profile must not show editing tag');
+  assert.strictEqual(afterLightingRetry.onboardCancelEditButtons, 0, 'clean onboard profile must not show cancel edit button');
+  assert.strictEqual(afterLightingRetry.targetBarCancelEditHidden, true, 'clean onboard profile must hide cancel edit button in target bar');
 
   mock.failCommands.add(protocol.COMMANDS.GET_FUNC_CONFIG);
   await win.webContents.executeJavaScript('document.querySelector(\'[data-action="read-lighting"]\')?.click()');
@@ -1503,6 +1515,11 @@ async function run({ app, getWindow, getMock }) {
   );
   assert.match(editingLabel || '', /Profile 3/);
   assert.strictEqual(afterProfileSwitch.editingProfile, 2);
+  assert.strictEqual(afterProfileSwitch.onboardProfileDirty, false, 'clean loaded profile 2 must not be dirty');
+  assert.strictEqual(afterProfileSwitch.onboardEditingTags, 0, 'clean loaded profile 2 must not show editing tag');
+  assert.strictEqual(afterProfileSwitch.onboardCancelEditButtons, 0, 'clean loaded profile 2 must not show cancel edit button');
+  assert.strictEqual(afterProfileSwitch.targetBarCancelEditHidden, true, 'clean loaded profile 2 must hide cancel edit button in target bar');
+  assert.strictEqual(afterProfileSwitch.bannerCancelEditHidden, true, 'clean loaded profile 2 must hide cancel edit button in top banner');
   assert.strictEqual(afterProfileSwitch.lightingOpInFlight, false, 'profile switch must drop the prior lighting request identity');
   assert.strictEqual(afterProfileSwitch.hasReadLighting, true);
   assert.strictEqual(afterProfileSwitch.canEditLighting, true, 'stale Apply completion must not leave lighting locked');
@@ -2175,7 +2192,7 @@ async function run({ app, getWindow, getMock }) {
   await win.webContents.executeJavaScript(`
     (() => {
       for (let s = 2; s < 16; s++) window.__maicongHarness.fillSlotActions(s, 0);
-      window.__maicongHarness.fillSlotActions(0, 1100);
+      window.__maicongHarness.fillSlotActions(0, 600);
       const shared = window.__maicongHarness.getActions(0);
       window.__maicongHarness.setSlotActions(1, shared);
       document.getElementById('btn-apply-macros')?.click();
@@ -2186,7 +2203,7 @@ async function run({ app, getWindow, getMock }) {
 
   // Review item 8: Divergence overflow rejected by prospective check in UI
   const preDivergeCount = await win.webContents.executeJavaScript('(() => window.__maicongHarness.getActions(0).length)()');
-  assert.strictEqual(preDivergeCount, 1100);
+  assert.strictEqual(preDivergeCount, 600);
   await win.webContents.executeJavaScript(`
     (() => {
       document.querySelector('#macro-slots-list button:nth-child(1)')?.click();
@@ -2202,7 +2219,7 @@ async function run({ app, getWindow, getMock }) {
   `);
   await sleep(100);
   const postDivergeInsertCount = await win.webContents.executeJavaScript('(() => window.__maicongHarness.getActions(0).length)()');
-  assert.strictEqual(postDivergeInsertCount, 1100, 'divergent insert must be blocked when total deduplicated storage would overflow 8192 bytes');
+  assert.strictEqual(postDivergeInsertCount, 600, 'divergent insert must be blocked when total deduplicated storage would overflow 4096 bytes');
 
   await win.webContents.executeJavaScript(`
     (() => {
@@ -2221,7 +2238,7 @@ async function run({ app, getWindow, getMock }) {
   mock.writtenBuffers.length = 0;
   await win.webContents.executeJavaScript(`
     (() => {
-      window.__maicongHarness.fillSlotActions(0, 2032);
+      window.__maicongHarness.fillSlotActions(0, 1008);
       document.getElementById('btn-apply-macros')?.click();
     })()
   `);
@@ -2232,7 +2249,7 @@ async function run({ app, getWindow, getMock }) {
   await win.webContents.executeJavaScript(`
     (() => {
       for (let s = 1; s < 16; s++) window.__maicongHarness.fillSlotActions(s, 0);
-      window.__maicongHarness.fillSlotActions(0, 2029);
+      window.__maicongHarness.fillSlotActions(0, 1005);
       document.getElementById('btn-record-macro')?.click();
     })()
   `);
@@ -2240,7 +2257,7 @@ async function run({ app, getWindow, getMock }) {
   win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'A' });
   await sleep(40);
   const held = await win.webContents.executeJavaScript('(() => window.__maicongHarness.getActions(0).length)()');
-  assert.strictEqual(held, 2030, 'KeyA down must record successfully into available capacity');
+  assert.strictEqual(held, 1006, 'KeyA down must record successfully into available capacity');
   win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'B' });
   await sleep(40);
   const heldBlocked = await win.webContents.executeJavaScript('(() => window.__maicongHarness.getActions(0).length)()');
@@ -2250,7 +2267,7 @@ async function run({ app, getWindow, getMock }) {
   const flushed = await win.webContents.executeJavaScript('(() => window.__maicongHarness.getActions(0))()');
   assert.ok(flushed.some((a) => a.action === 'keyup' && a.code === 4), 'pause must emit the reserved release');
   const afterFlush = flushed.length;
-  assert.strictEqual(afterFlush, 2031, 'flushed actions must reach exact maximum capacity of 2031');
+  assert.strictEqual(afterFlush, 1007, 'flushed actions must reach exact maximum capacity of 1007');
   win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'A' });
   await sleep(40);
   const orphan = await win.webContents.executeJavaScript('(() => window.__maicongHarness.getActions(0).length)()');

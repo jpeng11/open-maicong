@@ -85,7 +85,7 @@
         <div class="edit-target-status">
           <span id="hardware-active-label">Hardware active: Profile 1</span>
           <span class="sep">·</span>
-          <span id="editing-label">Editing: Profile 1</span>
+          <span id="editing-label">Loaded: Profile 1</span>
           <button type="button" class="action-btn sm cancel-edit-btn" id="btn-cancel-edit" data-action="cancel-edit" data-i18n-title="sidebar.cancelEdit" title="Cancel Edit">
             <svg class="line-icon sm"><use href="#i-refresh"/></svg>
             <span data-i18n="sidebar.cancelEdit">Cancel Edit</span>
@@ -172,10 +172,10 @@
         <div id="editing-mode-banner" class="editing-mode-banner" hidden>
           <div class="editing-banner-content">
             <svg class="line-icon"><use href="#i-edit"/></svg>
-            <span id="editing-banner-text">Currently editing: Profile 2 (Hardware active: Profile 1)</span>
+            <span id="editing-banner-text">Currently loaded: Profile 2 (Hardware active: Profile 1)</span>
           </div>
           <div class="editing-banner-actions">
-            <button type="button" class="action-btn sm cancel-edit-btn" data-action="cancel-edit" data-i18n-title="sidebar.cancelEdit">
+            <button type="button" class="action-btn sm cancel-edit-btn" id="btn-banner-cancel-edit" data-action="cancel-edit" data-i18n-title="sidebar.cancelEdit">
               <svg class="line-icon sm"><use href="#i-refresh"/></svg>
               <span data-i18n="sidebar.cancelEdit">Cancel Edit</span>
             </button>
@@ -1073,6 +1073,7 @@
         <!-- Capability Matrix Table -->
         <div class="dash-card full-width">
           <h2 data-i18n="guide.matrixTitle">Hardware Capability Matrix (MCHOSE G75 V2 2.4G Receiver)</h2>
+          <p class="card-desc" data-i18n="guide.matrixScope">Physical verification conducted on 2026-09-21 via 2.4G receiver (VID 0x3837, PID 0x3033, MCU FW 1.14, RF FW 1.30). Covers live configuration writes with fresh readback verification, specified lighting and physical key observations, and full restoration across all 63 memory regions (0 mismatches, excluding live battery/status). Does not claim visual inspection of all lighting animations, actual polling rate/latency measurements, wired USB operation, all macro playback modes, factory reset, or firmware flashing.</p>
           <table class="matrix-table">
             <thead>
               <tr>
@@ -1103,45 +1104,45 @@
               </tr>
               <tr>
                 <td><strong data-i18n="guide.featProfiles">Onboard Profiles</strong></td>
-                <td><span class="badge badge-subtle" data-i18n="guide.statusReadMock">Read verified / writes mock-tested</span></td>
+                <td><span class="badge badge-success" data-i18n="guide.statusVerified">Verified Working</span></td>
                 <td data-i18n="guide.mechProfiles">CMD 4 (getBase) / CMD 14 (setBase)</td>
-                <td data-i18n="guide.noteProfiles">Reads verified on hardware. Activate / switch / enable writes are mock-tested only; live device writes have not been validated.</td>
+                <td data-i18n="guide.noteProfiles">Live writes verified on hardware. Tested 4th profile enable (3-&gt;4), active profile switch (1-&gt;0), fresh readback, and restoring 3 profiles while preserving order (2.4G receiver FW 1.14/1.30).</td>
               </tr>
               <tr>
                 <td><strong data-i18n="guide.featLayers">4 Key Remap Layers</strong></td>
-                <td><span class="badge badge-subtle" data-i18n="guide.statusReadMock">Read verified / writes mock-tested</span></td>
+                <td><span class="badge badge-success" data-i18n="guide.statusVerified">Verified Working</span></td>
                 <td data-i18n="guide.mechLayers">CMD 7 (default) / CMD 8 (user) / CMD 9 (setUserKey)</td>
-                <td data-i18n="guide.noteLayers">Layers 0..3 (Win, WinFn, Mac, MacFn). Layer reads verified. Apply writes are mock-tested only.</td>
+                <td data-i18n="guide.noteLayers">Live writes verified across all 4 layers (Win, WinFn, Mac, MacFn). Key slot 10 modification verified with fresh 512-byte readback, followed by clean restoration.</td>
               </tr>
               <tr>
                 <td><strong data-i18n="guide.featRgb">23 RGB Lighting Effects</strong></td>
-                <td><span class="badge badge-subtle" data-i18n="guide.statusReadMock">Read verified / writes mock-tested</span></td>
+                <td><span class="badge badge-success" data-i18n="guide.statusVerified">Verified Working</span></td>
                 <td data-i18n="guide.mechRgb">CMD 5 (read) / CMD 6 (write 64B segmented)</td>
-                <td data-i18n="guide.noteRgb">Backlight effects 0..22, brightness 0..100, speed 0..4, direction, 24-bit RGB hex colors. Reads verified. Apply writes are mock-tested only.</td>
+                <td data-i18n="guide.noteRgb">Backlight effect IDs 0..22 (22 presets + custom) configuration write and readback tested. Only constant red human visually confirmed; other animations not individually visually accepted.</td>
               </tr>
               <tr>
                 <td><strong data-i18n="guide.featSide">Side Light Indicator</strong></td>
-                <td><span class="badge badge-subtle" data-i18n="guide.statusReadMock">Read verified / writes mock-tested</span></td>
+                <td><span class="badge badge-success" data-i18n="guide.statusVerified">Verified Working</span></td>
                 <td data-i18n="guide.mechSide">CMD 5 / CMD 6 (bytes 24..31)</td>
-                <td data-i18n="guide.noteSide">Neon (1), Constant (2), Breathing (3), Off (4), brightness, speed, RGB. Reads verified. Apply writes are mock-tested only.</td>
+                <td data-i18n="guide.noteSide">Side light mode IDs 1..4 and supported fields verified via live write and fresh readback; user confirmed green constant visual.</td>
               </tr>
               <tr>
                 <td><strong data-i18n="guide.featMacros">16 Hardware Macro Slots</strong></td>
-                <td><span class="badge badge-subtle" data-i18n="guide.statusReadMock">Read verified / writes mock-tested</span></td>
+                <td><span class="badge badge-success" data-i18n="guide.statusVerified">Verified Working</span></td>
                 <td data-i18n="guide.mechMacros">CMD 12 (read) / CMD 13 (write)</td>
-                <td data-i18n="guide.noteMacros">Shared 8192-byte flash space. Reads verified. Upload writes are mock-tested only.</td>
+                <td data-i18n="guide.noteMacros">8192-byte read window with writes restricted to first 4096 bytes verified via fresh readback (offsets 4096 and above alias profile 0 colors/layers). Slot 0 one-shot 'abc' bound to Q across all 4 layers, verified via readback and trusted browser KeyA/B/C typing 'abc'; not all 16 slots or playback modes tested.</td>
               </tr>
               <tr>
                 <td><strong data-i18n="guide.featPerf">Performance & Sleep</strong></td>
-                <td><span class="badge badge-subtle" data-i18n="guide.statusReadMock">Read verified / writes mock-tested</span></td>
+                <td><span class="badge badge-success" data-i18n="guide.statusVerified">Verified Working</span></td>
                 <td data-i18n="guide.mechPerf">CMD 5 / CMD 6 (byte 4 rate, byte 7 debounce, byte 35 sleepTime, byte 36 sleepMode, byte 6 bit0 Winlock, byte 1 OS nibble)</td>
-                <td data-i18n="guide.notePerf">Sleep is units of 30s at byte 35 and is displayed as-read (not rounded on sight). Never Sleep keeps the slider enabled; releasing the slider writes sleepMode 0. OS mode is byte 1 low nibble. Each control saves automatically. Reads verified. Writes are mock-tested only.</td>
+                <td data-i18n="guide.notePerf">Sleep time/mode, debounce, Win lock, OS mode, and polling rate enum values (1..4) verified via live write and fresh readback. User confirmed 60s sleep and physical key wake; actual polling rate (Hz) and latency were not measured.</td>
               </tr>
               <tr>
                 <td><strong data-i18n="guide.featImport">Profile Import / Export</strong></td>
-                <td><span class="badge badge-subtle" data-i18n="guide.statusWritesMock">Writes mock-tested</span></td>
+                <td><span class="badge badge-success" data-i18n="guide.statusVerified">Verified Working</span></td>
                 <td data-i18n="guide.mechImport">Local JSON file dialogs</td>
-                <td data-i18n="guide.noteImport">Export is local. Apply to device is mock-tested only and not atomic: a later section can fail after earlier writes.</td>
+                <td data-i18n="guide.noteImport">Native JSON and official v3 export, import, device apply, and re-export verified matching all 4 layers, 83 key LEDs, settings, and macros. Native preserves more profile fields; each export backs up one profile, not the whole keyboard. Official format omits calibration/keyExtras and preserves live hardware values on apply. Writes remain non-atomic (later section failure leaves earlier writes without transaction rollback).</td>
               </tr>
               <tr>
                 <td><strong data-i18n="guide.featRt">Rapid Trigger / Hall-Effect</strong></td>

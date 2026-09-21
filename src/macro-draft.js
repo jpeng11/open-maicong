@@ -13,7 +13,8 @@
   const MIN_DELAY = 5;
   const MAX_DELAY = 65535;
   const PARSE_FALLBACK = 50;
-  const SHARED_MACRO_SIZE = 8192;
+  const MACRO_READ_WINDOW_SIZE = 8192;
+  const MACRO_WRITABLE_LIMIT = 4096;
   const HEADER_BYTES = 68;
   const ACTION_BYTES = 4;
   const MAX_SLOTS = 16;
@@ -150,7 +151,7 @@
   }
 
   function maxActionCount() {
-    return Math.floor((SHARED_MACRO_SIZE - HEADER_BYTES) / ACTION_BYTES);
+    return Math.floor((MACRO_WRITABLE_LIMIT - HEADER_BYTES) / ACTION_BYTES);
   }
 
   /**
@@ -221,7 +222,7 @@
   /**
    * Prospective bank-state check.
    * Tests if assigning candidateActions to slots[slotIndex] with extraReservedCount pending releases
-   * fits within SHARED_MACRO_SIZE (8192 bytes).
+   * fits within MACRO_WRITABLE_LIMIT (4096 bytes).
    *
    * When extraReservedCount > 0, pending future releases reserve a distinct active body against
    * unique other bodies without fabricating dummy actions (avoiding collision with valid imported
@@ -255,7 +256,7 @@
       const targetActionCount = targetActions.length + reserveCount;
       const targetBytes = targetActionCount * ACTION_BYTES;
       const totalBytes = HEADER_BYTES + otherBytes + targetBytes;
-      return totalBytes <= SHARED_MACRO_SIZE;
+      return totalBytes <= MACRO_WRITABLE_LIMIT;
     }
 
     const prospectiveSlots = new Array(slots.length);
@@ -267,7 +268,7 @@
       }
     }
     const bytes = calculateMacroBankBytes(prospectiveSlots);
-    return bytes <= SHARED_MACRO_SIZE;
+    return bytes <= MACRO_WRITABLE_LIMIT;
   }
 
   function canAddActions(slots, addCount = 1, slotIndex = 0) {
@@ -526,7 +527,8 @@
     MIN_DELAY,
     MAX_DELAY,
     PARSE_FALLBACK,
-    SHARED_MACRO_SIZE,
+    MACRO_READ_WINDOW_SIZE,
+    MACRO_WRITABLE_LIMIT,
     HEADER_BYTES,
     ACTION_BYTES,
     MAX_SLOTS,

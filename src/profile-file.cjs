@@ -9,7 +9,7 @@ const library = require('./profile-library.cjs');
 const lightingMemory = require('./lighting-memory.cjs');
 const protocol = require('./protocol.cjs');
 const validators = require('./schema-validators.cjs');
-const { VALID_PHYSICAL_SLOTS } = require('./layout-g75v2.cjs');
+const { VALID_LIGHTING_SLOTS } = require('./layout-g75v2.cjs');
 const draft = require('./macro-draft.js');
 
 const G75_VID = 14391;
@@ -280,7 +280,7 @@ function lightToNative(light) {
   const colors = Array.isArray(light.colors) ? light.colors : [];
   const perKeyRgb = {};
   for (let i = 0; i < colors.length; i++) {
-    if (typeof colors[i] === 'string' && colors[i] && VALID_PHYSICAL_SLOTS.has(i)) {
+    if (typeof colors[i] === 'string' && colors[i] && VALID_LIGHTING_SLOTS.has(i)) {
       if (!HEX_COLOR.test(colors[i])) {
         return { valid: false, error: `Official light color at index ${i} is malformed` };
       }
@@ -345,6 +345,10 @@ function performanceToNative(perf) {
   return { valid: true, settings };
 }
 
+function isSupportedOfficialReportRate(rate) {
+  return rate === 1 || rate === 2 || rate === 3 || rate === 4;
+}
+
 function nativeToPerformance(snapshot) {
   const s = snapshot.settings || {};
   const macMode = Number.isInteger(s.macMode) ? s.macMode % 4 : 0;
@@ -354,7 +358,7 @@ function nativeToPerformance(snapshot) {
     rf_battery: 0,
     isCharging: 0,
     work_mode: 0,
-    reporteRate: 0,
+    reporteRate: s.reporteRate,
     report_rate_2_4G: 0,
     tickRate: 0,
     sleepTime: s.sleepTime,
@@ -724,9 +728,16 @@ function exportOfficialEnvelope(item, options = {}) {
   } catch (err) {
     return { valid: false, error: err.message || 'Profile layers could not be encoded' };
   }
+  const performance = nativeToPerformance(src);
+  if (!isSupportedOfficialReportRate(performance.reporteRate)) {
+    return {
+      valid: false,
+      error: `Invalid reporteRate: ${performance.reporteRate}. Must be integer 1..4 (1=8k, 2=4k, 3=2k, 4=1k)`
+    };
+  }
   const data = {
     name,
-    performance: nativeToPerformance(src),
+    performance,
     light: nativeToLight(src),
     userKeys,
     triggerTravel: src.triggerTravel || { travelKeys: [] },

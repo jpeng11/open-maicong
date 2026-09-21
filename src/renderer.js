@@ -1194,6 +1194,50 @@ function updateFromDeviceState(devState) {
   renderKeyboard();
 }
 
+function isOnboardProfileDirty(profileIndex) {
+  if (isLocalPreview()) return false;
+  const targetIndex = Number.isInteger(profileIndex) ? profileIndex : state.editingProfile;
+  if (targetIndex !== state.editingProfile) return false;
+
+  const keymapDirty = Boolean(
+    state.keymapDirty ||
+    (typeof KeyConfig !== 'undefined' && KeyConfig && typeof KeyConfig.hasUnpersistedSlotRevs === 'function' &&
+     KeyConfig.hasUnpersistedSlotRevs(state.keymapSlotRevs, state.keymapSlotPersisted))
+  );
+
+  const settingsDirty = Boolean(
+    state.settingsDraftDirty ||
+    (typeof PerformanceAutosave !== 'undefined' && PerformanceAutosave && typeof PerformanceAutosave.hasDirty === 'function' &&
+     PerformanceAutosave.hasDirty(state.settingsEdited)) ||
+    (typeof PerformanceAutosave !== 'undefined' && PerformanceAutosave && typeof PerformanceAutosave.hasUnpersistedFieldRevs === 'function' &&
+     PerformanceAutosave.hasUnpersistedFieldRevs(state.settingsFieldRevs, state.settingsPersistedRevs))
+  );
+
+  const lightingDirty = Boolean(
+    state.lightingDraftDirty ||
+    (typeof LightingAutosave !== 'undefined' && LightingAutosave && typeof LightingAutosave.hasDirty === 'function' &&
+     LightingAutosave.hasDirty(state.lightingEdited))
+  );
+
+  const keyColorsDirty = Boolean(
+    state.changedKeyColors && Object.keys(state.changedKeyColors).length > 0
+  );
+
+  return keymapDirty || settingsDirty || lightingDirty || keyColorsDirty;
+}
+
+let _lastOnboardDirtyState = false;
+
+function refreshProfileChromeIfDirtyChanged() {
+  const currentDirty = isOnboardProfileDirty(state.editingProfile);
+  if (currentDirty !== _lastOnboardDirtyState) {
+    _lastOnboardDirtyState = currentDirty;
+    renderDashboardProfiles();
+    renderProfileLibrary();
+    renderEditTargetBar();
+  }
+}
+
 function renderDashboardProfiles() {
   const container = document.getElementById('dash-onboard-slots');
   if (!container) return;
@@ -1202,24 +1246,25 @@ function renderDashboardProfiles() {
   for (let i = 0; i < 4; i++) {
     const enabled = i < count;
     const isActive = i === state.activeProfile;
-    const isEditing = !isLocalPreview() && i === state.editingProfile;
+    const isLoadedTarget = !isLocalPreview() && i === state.editingProfile;
+    const isEditing = isLoadedTarget && isOnboardProfileDirty(i);
     const bind = (state.appBinds || []).find((row) => row.profileIndex === i) || null;
     const slotEl = document.createElement('div');
-    slotEl.className = 'dash-profile-slot' + (isActive ? ' active' : '') + (isEditing ? ' editing' : '') + (!enabled ? ' disabled' : '');
+    slotEl.className = 'dash-profile-slot' + (isActive ? ' active' : '') + (isEditing ? ' editing' : (isLoadedTarget ? ' loaded' : '')) + (!enabled ? ' disabled' : '');
     slotEl.innerHTML = `
       <div class="dash-slot-num">${String(i + 1).padStart(2, '0')}</div>
       <div class="dash-slot-info">
         <div class="dash-slot-title">${escapeHtml(onboardName(i))}</div>
         <div class="dash-slot-tags">
           ${isActive ? `<span class="profile-tag active-tag">${t('profile.active')}</span>` : ''}
-          ${isEditing ? `<span class="profile-tag editing-tag">${t('sidebar.editingBadge')}</span>` : ''}
+          ${isEditing ? `<span class="profile-tag editing-tag">${t('sidebar.editingBadge')}</span>` : (isLoadedTarget && !isActive ? `<span class="profile-tag loaded-tag">${t('sidebar.loadedBadge')}</span>` : '')}
           ${!enabled ? `<span class="profile-tag disabled-tag">${t('profile.notEnabled')}</span>` : ''}
           ${bind ? `<span class="profile-tag bind-tag">${escapeHtml(bind.displayName || bind.bundleId)}</span>` : ''}
         </div>
       </div>
       <div class="dash-slot-actions">
         ${enabled && !isActive ? `<button type="button" class="action-btn sm primary" data-action="switch-profile" data-profile="${i}">${t('profile.activate')}</button>` : ''}
-        ${enabled && !isEditing ? `<button type="button" class="action-btn sm" data-action="load-edit-profile" data-profile="${i}">${t('sidebar.loadEdit')}</button>` : ''}
+        ${enabled && !isLoadedTarget ? `<button type="button" class="action-btn sm" data-action="load-edit-profile" data-profile="${i}">${t('sidebar.loadEdit')}</button>` : ''}
         ${enabled && isEditing ? `<button type="button" class="action-btn sm cancel-edit-btn" data-action="cancel-edit">${t('sidebar.cancelEdit')}</button>` : ''}
         ${!enabled ? `<button type="button" class="action-btn sm" data-action="enable-fourth-profile">${t('profile.enable4')}</button>` : ''}
       </div>
@@ -1352,10 +1397,11 @@ function renderProfileLibrary() {
     for (let i = 0; i < 4; i++) {
       const enabled = i < count;
       const isActive = i === state.activeProfile;
-      const isEditing = !isLocalPreview() && i === state.editingProfile;
+      const isLoadedTarget = !isLocalPreview() && i === state.editingProfile;
+      const isEditing = isLoadedTarget && isOnboardProfileDirty(i);
       const bind = (state.appBinds || []).find((row) => row.profileIndex === i) || null;
       const card = document.createElement('div');
-      card.className = 'profile-card' + (isActive ? ' active' : '') + (isEditing ? ' editing' : '') + (!enabled ? ' disabled' : '');
+      card.className = 'profile-card' + (isActive ? ' active' : '') + (isEditing ? ' editing' : (isLoadedTarget ? ' loaded' : '')) + (!enabled ? ' disabled' : '');
       card.dataset.profile = String(i);
       card.dataset.key = `KeyboardProfile@keyboard@${i}`;
       card.dataset.drop = 'onboard';
@@ -1366,7 +1412,7 @@ function renderProfileLibrary() {
             <div class="profile-info-main">
               <span class="profile-num">${String(i + 1).padStart(2, '0')}</span>
               <span class="profile-title" title="${escapeAttr(title)}">${escapeHtml(title)}</span>
-              ${isEditing ? `<span class="profile-tag editing-tag">${t('sidebar.editingBadge')}</span>` : ''}
+              ${isEditing ? `<span class="profile-tag editing-tag">${t('sidebar.editingBadge')}</span>` : (isLoadedTarget && !isActive ? `<span class="profile-tag loaded-tag">${t('sidebar.loadedBadge')}</span>` : '')}
               <span class="profile-tag" hidden>${t('profile.active')}</span>
             </div>
             <p class="profile-desc">${enabled ? (bind
@@ -1383,7 +1429,7 @@ function renderProfileLibrary() {
           </div>
         </div>
         <div class="profile-card-actions profile-menu-dropdown" role="menu">
-          ${enabled && !isEditing ? `<button class="action-btn menu-item" data-action="load-edit-profile" data-profile="${i}"><svg class="line-icon sm"><use href="#i-edit"/></svg><span>${t('sidebar.loadEdit')}</span></button>` : ''}
+          ${enabled && !isLoadedTarget ? `<button class="action-btn menu-item" data-action="load-edit-profile" data-profile="${i}"><svg class="line-icon sm"><use href="#i-edit"/></svg><span>${t('sidebar.loadEdit')}</span></button>` : ''}
           ${enabled && isEditing ? `<button class="action-btn menu-item" data-action="cancel-edit"><svg class="line-icon sm"><use href="#i-refresh"/></svg><span>${t('sidebar.cancelEdit')}</span></button>` : ''}
           ${enabled && !isActive ? `<button class="action-btn menu-item" data-action="switch-profile" data-profile="${i}"><svg class="line-icon sm"><use href="#i-radio"/></svg><span>${t('sidebar.activate')}</span></button>` : ''}
           ${enabled ? `<button class="action-btn menu-item" data-action="copy-onboard-local" data-profile="${i}"><svg class="line-icon sm"><use href="#i-copy"/></svg><span>${t('profile.copy')}</span></button>
@@ -1400,7 +1446,7 @@ function renderProfileLibrary() {
         if (ev.target.closest('.profile-more-btn') || ev.target.closest('.profile-menu-dropdown') || ev.target.closest('.action-btn')) {
           return;
         }
-        if (enabled && (!isEditing || isLocalPreview())) {
+        if (enabled && (!isLoadedTarget || isLocalPreview())) {
           const sel = document.getElementById('edit-profile-select');
           if (sel) sel.value = String(i);
           void handleLoadEditTarget();
@@ -3357,6 +3403,7 @@ function finishKeymapSave(success, layer, slotRevs, error, snapshotRevs) {
   else if (state.keymapDirty) state.keymapSaveStatus = 'saving';
   else state.keymapSaveStatus = 'saved';
   renderKeymapSaveStatus();
+  refreshProfileChromeIfDirtyChanged();
 }
 
 function saveRequestCurrent(captured) {
@@ -3466,6 +3513,7 @@ async function commitBinding(tuple, label, options) {
   updateApplyButtonsState();
   updateRestoreDefaultsButton();
   state.keymapDirty = true;
+  refreshProfileChromeIfDirtyChanged();
   const res = await persistBindingUpdates(state.activeLayer, [{
     slot,
     type: tuple.type,
@@ -3751,6 +3799,7 @@ function stageLightingEdit(fields) {
   scheduleLightingSave(LightingAutosave.coalesceWait(fields, Date.now(), state.lightingLastFlushAt));
   updateApplyButtonsState();
   renderLightingSaveStatus();
+  refreshProfileChromeIfDirtyChanged();
   return true;
 }
 
@@ -3943,6 +3992,7 @@ async function runQueuedLightingSave() {
     renderLightingSaveStatus();
     renderLightingControls();
     showToast(t('toast.saveLightingFailed', { error: state.lightingSaveError }), 'error');
+    refreshProfileChromeIfDirtyChanged();
     return false;
   }
   state.lightingEdited = LightingAutosave.settleEdited(state.lightingEdited, captured.patch, state.lighting);
@@ -3962,6 +4012,7 @@ async function runQueuedLightingSave() {
     state.lightingSaveError = null;
   }
   renderLightingSaveStatus();
+  refreshProfileChromeIfDirtyChanged();
   return true;
 }
 
@@ -4080,6 +4131,7 @@ async function runQueuedLightingRead() {
       updateApplyButtonsState();
       renderLightingControls();
       renderLightingSaveStatus();
+      refreshProfileChromeIfDirtyChanged();
       showToast(
         state.lightingDraftDirty
           ? t('toast.lightingReadKept')
@@ -6778,7 +6830,7 @@ async function handleApplyMacros() {
   rememberMacroNames(state.stagedMacros);
   persistMacroMetadata();
   const snapshot = MacroDraft.hardwareMacroSlots(state.stagedMacros);
-  if (MacroDraft.calculateMacroBankBytes(snapshot) > MacroDraft.SHARED_MACRO_SIZE) {
+  if (MacroDraft.calculateMacroBankBytes(snapshot) > MacroDraft.MACRO_WRITABLE_LIMIT) {
     showToast(t('toast.macroFull'), 'error');
     return;
   }
@@ -6917,6 +6969,7 @@ function applySettingsSaveStatus() {
     state.settingsDraftDirty
   );
   renderSettingsSaveStatus();
+  refreshProfileChromeIfDirtyChanged();
 }
 
 function persistSettingsPatch(fields) {
@@ -6944,6 +6997,7 @@ function persistSettingsPatch(fields) {
   const patch = PerformanceAutosave.buildPatch(state.settingsEdited, state.settings, capturedRevs, state.settingsFieldRevs);
   renderSettingsControls();
   renderSettingsSaveStatus();
+  refreshProfileChromeIfDirtyChanged();
   const job = settingsSaveGate.enqueue(() => persistSettingsPatchNow(patch, capturedRevs, captured));
   void job.finally(() => {
     applySettingsSaveStatus();
@@ -7321,6 +7375,7 @@ async function readSettingsNow(captured) {
       state.hasReadSettings = true;
       updateApplyButtonsState();
       renderSettingsControls();
+      refreshProfileChromeIfDirtyChanged();
       if (merged.skipped.length) {
         showToast(t('toast.settingsRefreshedKept'), 'success');
       } else {
@@ -8229,7 +8284,25 @@ function renderEditTargetBar() {
   const ed = document.getElementById('editing-label');
   const sel = document.getElementById('edit-profile-select');
   if (hw) hw.textContent = t('sidebar.hardwareActive', { n: state.activeProfile + 1 });
-  if (ed) ed.textContent = t('sidebar.editingLayer', { n: state.editingProfile + 1, layer: state.activeLayer });
+  if (ed) {
+    if (isLocalPreview()) {
+      const previewName = state.localPreviewTarget?.name || t('profile.customDraft');
+      ed.textContent = t('sidebar.previewLayer', {
+        name: previewName,
+        layer: state.activeLayer,
+        default: `Preview: ${previewName} · Layer ${state.activeLayer}`
+      });
+    } else {
+      const isDirty = isOnboardProfileDirty(state.editingProfile);
+      ed.textContent = isDirty
+        ? t('sidebar.editingLayer', { n: state.editingProfile + 1, layer: state.activeLayer })
+        : t('sidebar.loadedLayer', {
+            n: state.editingProfile + 1,
+            layer: state.activeLayer,
+            default: `Loaded: Profile ${state.editingProfile + 1} · Layer ${state.activeLayer}`
+          });
+    }
+  }
   if (sel && String(sel.value) !== String(state.editingProfile)) {
     sel.value = String(state.editingProfile);
   }
@@ -8239,14 +8312,19 @@ function renderEditTargetBar() {
     enableBtn.disabled = count >= 4;
   }
   const isDifferent = isLocalPreview() || state.editingProfile !== state.activeProfile;
+  const shouldShowCancel = isLocalPreview() || isOnboardProfileDirty(state.editingProfile);
   const cancelBtn = document.getElementById('btn-cancel-edit');
   if (cancelBtn) {
-    cancelBtn.hidden = false;
+    cancelBtn.hidden = !shouldShowCancel;
   }
   const banner = document.getElementById('editing-mode-banner');
   const bannerText = document.getElementById('editing-banner-text');
   if (banner) {
     banner.hidden = !isDifferent;
+    const bannerCancelBtn = banner.querySelector('.cancel-edit-btn');
+    if (bannerCancelBtn) {
+      bannerCancelBtn.hidden = !shouldShowCancel;
+    }
     if (isDifferent && bannerText) {
       if (isLocalPreview()) {
         const previewName = state.localPreviewTarget?.name || t('profile.customDraft');
@@ -8256,11 +8334,21 @@ function renderEditTargetBar() {
           default: `Currently previewing local profile: ${previewName} (Hardware active: Profile ${state.activeProfile + 1})`
         });
       } else {
-        bannerText.textContent = t('sidebar.editBanner', {
-          edit: state.editingProfile + 1,
-          hw: state.activeProfile + 1,
-          default: `Currently editing: Profile ${state.editingProfile + 1} (Hardware active: Profile ${state.activeProfile + 1})`
-        });
+        const isDirty = isOnboardProfileDirty(state.editingProfile);
+        if (isDirty) {
+          bannerText.textContent = t('sidebar.editBanner', {
+            edit: state.editingProfile + 1,
+            hw: state.activeProfile + 1,
+            default: `Currently editing: Profile ${state.editingProfile + 1} (Hardware active: Profile ${state.activeProfile + 1})`
+          });
+        } else {
+          bannerText.textContent = t('sidebar.loadedBanner', {
+            loaded: state.editingProfile + 1,
+            edit: state.editingProfile + 1,
+            hw: state.activeProfile + 1,
+            default: `Currently loaded: Profile ${state.editingProfile + 1} (Hardware active: Profile ${state.activeProfile + 1})`
+          });
+        }
       }
     }
   }
@@ -8456,9 +8544,10 @@ async function runLoadEditTarget(captured) {
     renderMacros();
     renderAdvancedPanel();
     renderEditTargetBar();
+    _lastOnboardDirtyState = false;
     renderProfileLibrary();
     renderDashboardProfiles();
-    showToast(t('toast.editingProfile', { n: captured.profile + 1 }), 'success');
+    showToast(t('toast.loadedProfile', { n: captured.profile + 1, default: t('toast.editingProfile', { n: captured.profile + 1 }) }), 'success');
   } catch (err) {
     if (!loadRequestCurrent(captured)) return;
     showToast(t('toast.loadEditTargetFailed', { error: err.message }), 'error');
@@ -10199,6 +10288,16 @@ function editorSnapshot() {
     profileNameDialogHidden: Boolean(document.getElementById('profile-name-dialog')?.hidden),
     profileFreeSlotHidden: Boolean(document.getElementById('profile-free-slot')?.hidden),
     profileCapacityText: document.getElementById('profile-library-capacity')?.textContent || '',
+    onboardEditingTags: Array.from(document.querySelectorAll('#onboard-profile-list .profile-card .editing-tag')).length,
+    onboardEditingCards: Array.from(document.querySelectorAll('#onboard-profile-list .profile-card.editing')).map((el) => el.dataset.profile),
+    onboardCancelEditButtons: Array.from(document.querySelectorAll('#onboard-profile-list .cancel-edit-btn')).length,
+    dashEditingSlots: Array.from(document.querySelectorAll('#dash-onboard-slots .dash-profile-slot.editing')).length,
+    dashEditingTags: Array.from(document.querySelectorAll('#dash-onboard-slots .editing-tag')).length,
+    dashCancelEditButtons: Array.from(document.querySelectorAll('#dash-onboard-slots .cancel-edit-btn')).length,
+    onboardProfileDirty: isOnboardProfileDirty(state.editingProfile),
+    targetBarCancelEditHidden: Boolean(document.getElementById('btn-cancel-edit')?.hidden),
+    bannerCancelEditHidden: Boolean(document.querySelector('#editing-mode-banner .cancel-edit-btn')?.hidden),
+    bannerHidden: Boolean(document.getElementById('editing-mode-banner')?.hidden),
     lightingGifQueued: gifQueuePending(),
     lightingToggleDisabled: Boolean(document.getElementById('light-custom-color-toggle')?.disabled),
     lightingPickerDisabled: Boolean(document.getElementById('light-color-input')?.disabled),

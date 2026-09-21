@@ -73,6 +73,7 @@ class MockGlwMemoryDevice {
     this.resetNotifyMode = options.resetNotifyMode || 'after-ack';
     this.resetNotifyKind = options.resetNotifyKind || 'a2';
     this.resetNotifyDelayMs = options.resetNotifyDelayMs || 0;
+    this.aliasMode = Boolean(options.aliasMode);
     this.info = Buffer.alloc(56, 0);
     this.base = Buffer.alloc(56, 0);
     this.func = Buffer.alloc(64 * 4, 0);
@@ -85,6 +86,11 @@ class MockGlwMemoryDevice {
     this.extras = Buffer.alloc(4 * 1024, 0);
     this.custom = Buffer.alloc(4 * 1024, 0);
     if (options.seed !== false) this.seedFromFixtures();
+  }
+
+  _syncAliases() {
+    this.colors.copy(this.macros, 4096, 0, 2048);
+    this.userKeys.copy(this.macros, 6144, 0, 2048);
   }
 
   seedFromFixtures() {
@@ -115,6 +121,7 @@ class MockGlwMemoryDevice {
         Buffer.from(defaultLayers[String(l)], 'hex').copy(this.defaultKeys, l * 512);
       }
     }
+    if (this.aliasMode) this._syncAliases();
   }
 
   on(event, handler) {
@@ -166,6 +173,38 @@ class MockGlwMemoryDevice {
       }
       if (!this.dropCommands.has(cmd) && !this.dropWriteOffsets.has(offset)) {
         payload.copy(this[writeRegion], offset);
+        if (this.aliasMode) {
+          if (cmd === protocol.COMMANDS.SET_KEY_COLOR) {
+            const start = offset;
+            const end = offset + payload.length;
+            const copyStart = Math.max(start, 0);
+            const copyEnd = Math.min(end, 2048);
+            if (copyStart < copyEnd) {
+              payload.copy(this.macros, 4096 + copyStart, copyStart - start, copyEnd - start);
+            }
+          } else if (cmd === protocol.COMMANDS.SET_USER_KEY_MATRIX) {
+            const start = offset;
+            const end = offset + payload.length;
+            const copyStart = Math.max(start, 0);
+            const copyEnd = Math.min(end, 2048);
+            if (copyStart < copyEnd) {
+              payload.copy(this.macros, 6144 + copyStart, copyStart - start, copyEnd - start);
+            }
+          } else if (cmd === protocol.COMMANDS.SET_MACROS) {
+            const start = offset;
+            const end = offset + payload.length;
+            const colorStart = Math.max(start, 4096);
+            const colorEnd = Math.min(end, 6144);
+            if (colorStart < colorEnd) {
+              payload.copy(this.colors, colorStart - 4096, colorStart - start, colorEnd - start);
+            }
+            const layerStart = Math.max(start, 6144);
+            const layerEnd = Math.min(end, 8192);
+            if (layerStart < layerEnd) {
+              payload.copy(this.userKeys, layerStart - 6144, layerStart - start, layerEnd - start);
+            }
+          }
+        }
       }
       this._scheduleReply(() => this.emit('data', makeReplyBuffer({ command: cmd, offset, data: [] })), cmd);
       return;
@@ -199,6 +238,9 @@ class MockGlwMemoryDevice {
 
     const readRegion = READ_REGION[cmd];
     if (readRegion) {
+      if (this.aliasMode && cmd === protocol.COMMANDS.GET_MACROS) {
+        this._syncAliases();
+      }
       const region = this[readRegion];
       const chunk = Buffer.alloc(size, 0);
       if (offset < region.length) {

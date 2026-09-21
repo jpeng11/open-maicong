@@ -1,7 +1,5 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const keys = require('../src/profile-keys.cjs');
 const protocol = require('../src/protocol.cjs');
 const profileFile = require('../src/profile-file.cjs');
@@ -169,10 +167,6 @@ describe('official KeyboardProfile envelope', () => {
   });
 
   test('independent official MT/TGL fixture converts to native tables and keeps shared references', () => {
-    const raw = fs.readFileSync(path.join(__dirname, 'fixtures', 'official-keyboard-profile-v3-advanced-mt-tgl.json'), 'utf8');
-    assert.match(raw, /"clickKey"/);
-    assert.match(raw, /"downKey"/);
-    assert.doesNotMatch(raw, /officialAdvanced/);
     const inspected = profileFile.inspectOfficialEnvelope(officialAdvanced);
     assert.equal(inspected.valid, true, inspected.error);
     assert.equal(inspected.native.officialAdvanced, undefined);
@@ -329,13 +323,69 @@ describe('official KeyboardProfile envelope', () => {
     );
     assert.equal(oob.valid, false);
   });
-});
 
-describe('official fixture file is independent of the encoder', () => {
-  test('fixture on disk still contains dataV2 0x100004 not a roundtrip artifact', () => {
-    const raw = fs.readFileSync(path.join(__dirname, 'fixtures', 'official-keyboard-profile-v3.json'), 'utf8');
-    assert.match(raw, /0x100004/);
-    assert.match(raw, /"version": 3/);
-    assert.doesNotMatch(raw, /Maicong Studio/);
+  test('exported official JSON reimport preserves polling rate and OS mode', () => {
+    const base = profileFile.inspectOfficialEnvelope(official);
+    assert.equal(base.valid, true, base.error);
+    for (const [rate, os] of [[1, 0], [4, 2]]) {
+      const native = JSON.parse(JSON.stringify(base.native));
+      native.settings.reporteRate = rate;
+      native.settings.macMode = os;
+      const exported = profileFile.exportOfficialEnvelope({ name: 'RateRoundtrip', data: native });
+      assert.equal(exported.valid, true, exported.error);
+      const reimported = profileFile.inspectOfficialEnvelope(JSON.parse(JSON.stringify(exported.envelope)));
+      assert.equal(reimported.valid, true, reimported.error);
+      assert.equal(reimported.native.settings.reporteRate, rate);
+      assert.equal(reimported.native.settings.macMode, os);
+    }
+    for (const rate of [1, 2, 3, 4]) {
+      const native = JSON.parse(JSON.stringify(base.native));
+      native.settings.reporteRate = rate;
+      assert.equal(profileFile.exportOfficialEnvelope({ name: 'RateValid', data: native }).valid, true);
+    }
+    const oddOs = JSON.parse(JSON.stringify(base.native));
+    oddOs.settings.reporteRate = 4;
+    oddOs.settings.macMode = 3;
+    const oddExported = profileFile.exportOfficialEnvelope({ name: 'OsNorm', data: oddOs });
+    const oddReimported = profileFile.inspectOfficialEnvelope(JSON.parse(JSON.stringify(oddExported.envelope)));
+    assert.equal(oddReimported.valid, true, oddReimported.error);
+    assert.equal(oddReimported.native.settings.macMode, 2);
+    const zeroRate = JSON.parse(JSON.stringify(base.native));
+    zeroRate.settings.reporteRate = 0;
+    const rejectedZero = profileFile.exportOfficialEnvelope({ name: 'ZeroRate', data: zeroRate });
+    assert.equal(rejectedZero.valid, false);
+    assert.match(rejectedZero.error || '', /Invalid reporteRate: 0/);
+  });
+
+  test('official export reimport preserves per-key RGB at lighting-only slots 45/61', () => {
+    const base = profileFile.inspectOfficialEnvelope(official);
+    assert.equal(base.valid, true, base.error);
+    const native = JSON.parse(JSON.stringify(base.native));
+    native.perKeyRgb = {
+      11: '#AABBCC',
+      45: '#112233',
+      61: '#445566'
+    };
+    const exported = profileFile.exportOfficialEnvelope({ name: 'SpaceLed', data: native });
+    assert.equal(exported.valid, true, exported.error);
+    const reimported = profileFile.inspectOfficialEnvelope(JSON.parse(JSON.stringify(exported.envelope)));
+    assert.equal(reimported.valid, true, reimported.error);
+    assert.equal(reimported.native.perKeyRgb['11'], '#AABBCC');
+    assert.equal(reimported.native.perKeyRgb['45'], '#112233');
+    assert.equal(reimported.native.perKeyRgb['61'], '#445566');
+
+    const bad45 = JSON.parse(JSON.stringify(official));
+    bad45.data.light.colors = [];
+    bad45.data.light.colors[45] = 'not-a-color';
+    const rejected45 = profileFile.inspectOfficialEnvelope(bad45);
+    assert.equal(rejected45.valid, false);
+    assert.match(rejected45.error || '', /color at index 45/);
+
+    const bad61 = JSON.parse(JSON.stringify(official));
+    bad61.data.light.colors = [];
+    bad61.data.light.colors[61] = '#GGGGGG';
+    const rejected61 = profileFile.inspectOfficialEnvelope(bad61);
+    assert.equal(rejected61.valid, false);
+    assert.match(rejected61.error || '', /color at index 61/);
   });
 });

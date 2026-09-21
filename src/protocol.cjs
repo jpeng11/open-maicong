@@ -16,7 +16,8 @@ const TOTAL_KEY_AREA_SIZE = 512;
 const USED_KEY_AREA_SIZE = 384; // 128 keys * 3 bytes
 const MAX_LAYERS = 4; // 0: Win, 1: Win Fn, 2: Mac, 3: Mac Fn
 const MAX_MACRO_SLOTS = 16;
-const SHARED_MACRO_SIZE = 8192; // Type 133 (G75 V2) shared macro buffer
+const MACRO_READ_WINDOW_SIZE = 8192; // CMD 12 read/capture window (8192 bytes)
+const MACRO_WRITABLE_LIMIT = 4096; // Conservative writable limit (derived from observed physical aliases: [4096..6143] = colors, [6144..8191] = profile 0 keylayers)
 const MIN_MACRO_DELAY = 5;
 
 // Special key codes
@@ -1434,12 +1435,16 @@ function encodeMacroAction(act, isEnd = false) {
 }
 
 /**
- * Deserializes full 8192-byte macro region into an array of macro slots (16 slots).
- * Validates magic metadata, offset alignment and bounds. Fail-closed on corruption.
+ * Deserializes macro region into an array of macro slots (16 slots).
+ * Accepts buffers of at least MACRO_WRITABLE_LIMIT (4096) bytes (such as the 8192-byte
+ * read window or a serialized 4096-byte safe buffer).
+ * Validates magic metadata, offset alignment and bounds strictly within MACRO_WRITABLE_LIMIT.
+ * Action decoding stops at MACRO_WRITABLE_LIMIT to prevent interpreting aliased color/layer memory.
+ * Fail-closed on corruption or unterminated slot.
  */
 function parseMacroRegion(data) {
-  if (!data || data.length < SHARED_MACRO_SIZE) {
-    throw new Error(`parseMacroRegion requires full ${SHARED_MACRO_SIZE}-byte macro region`);
+  if (!data || data.length < MACRO_WRITABLE_LIMIT) {
+    throw new Error(`parseMacroRegion requires at least ${MACRO_WRITABLE_LIMIT}-byte macro region`);
   }
 
   // Validate magic header at byte 32..33
@@ -1450,9 +1455,9 @@ function parseMacroRegion(data) {
   const offsets = [];
   for (let i = 0; i < MAX_MACRO_SLOTS; i++) {
     const off = data[i * 2] | (data[i * 2 + 1] << 8);
-    // Validate offset bounds and 4-byte alignment
-    if (off < 64 || off > SHARED_MACRO_SIZE - 4 || (off % 4 !== 0)) {
-      throw new Error(`Invalid macro offset at slot ${i}: ${off}. Must be 4-byte aligned and between 64 and ${SHARED_MACRO_SIZE - 4}`);
+    // Validate offset bounds and 4-byte alignment within conservative writable limit
+    if (off < 64 || off > MACRO_WRITABLE_LIMIT - 4 || (off % 4 !== 0)) {
+      throw new Error(`Invalid macro offset at slot ${i}: ${off}. Must be 4-byte aligned and between 64 and ${MACRO_WRITABLE_LIMIT - 4}`);
     }
     offsets.push(off);
   }
@@ -1470,7 +1475,7 @@ function parseMacroRegion(data) {
 
     let cur = slotOffset;
     let terminated = false;
-    while (cur + 4 <= SHARED_MACRO_SIZE) {
+    while (cur + 4 <= MACRO_WRITABLE_LIMIT) {
       const chunk = data.subarray(cur, cur + 4);
       // Check for empty marker block [0, 0, 128, 0]
       if (chunk[0] === 0 && chunk[1] === 0 && chunk[2] === 128 && chunk[3] === 0) {
@@ -1507,14 +1512,15 @@ function parseMacroRegion(data) {
 }
 
 /**
- * Serializes 16 macro slots into the 8192-byte shared memory buffer.
- * Preflights capacity before building buffer; throws RangeError on overflow.
- * Preserves unmodified slots from fresh 8192-byte read and metadata.
+ * Serializes 16 macro slots into the conservative 4096-byte safe memory buffer.
+ * Preflights capacity against MACRO_WRITABLE_LIMIT before building buffer; throws RangeError on overflow.
+ * Preserves unmodified slots and metadata from prior buffer within safe range (0..4095).
+ * Never touches protected tail 4096..8191.
  * Validates all actions and types.
  */
 function serializeMacroRegion(slots, existingBuffer = null) {
-  if (!existingBuffer || existingBuffer.length < SHARED_MACRO_SIZE) {
-    throw new Error(`serializeMacroRegion requires valid ${SHARED_MACRO_SIZE}-byte prior buffer`);
+  if (!existingBuffer || existingBuffer.length < MACRO_WRITABLE_LIMIT) {
+    throw new Error(`serializeMacroRegion requires valid prior buffer of at least ${MACRO_WRITABLE_LIMIT} bytes`);
   }
 
   // Parse existing slots to preserve unedited slots
@@ -1608,12 +1614,12 @@ function serializeMacroRegion(slots, existingBuffer = null) {
     }
   }
 
-  if (currentActionOffset > SHARED_MACRO_SIZE) {
-    throw new RangeError(`Macro storage capacity exceeded: requires ${currentActionOffset} bytes, max ${SHARED_MACRO_SIZE}`);
+  if (currentActionOffset > MACRO_WRITABLE_LIMIT) {
+    throw new RangeError(`Macro storage capacity exceeded: requires ${currentActionOffset} bytes, max ${MACRO_WRITABLE_LIMIT}`);
   }
 
-  const buffer = Buffer.alloc(SHARED_MACRO_SIZE, 0);
-  existingBuffer.copy(buffer);
+  const buffer = Buffer.alloc(MACRO_WRITABLE_LIMIT, 0);
+  existingBuffer.copy(buffer, 0, 0, MACRO_WRITABLE_LIMIT);
 
   // Metadata magic
   buffer[32] = 129; // 0x81
@@ -2252,7 +2258,8 @@ module.exports = {
   USED_KEY_AREA_SIZE,
   MAX_LAYERS,
   MAX_MACRO_SLOTS,
-  SHARED_MACRO_SIZE,
+  MACRO_READ_WINDOW_SIZE,
+  MACRO_WRITABLE_LIMIT,
   MIN_MACRO_DELAY,
   KNOB_CODE,
   FN_CODE,

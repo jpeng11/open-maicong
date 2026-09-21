@@ -75,9 +75,10 @@ describe('Macro editor draft helpers (hub tC / t_ semantics)', () => {
   });
 
   test('down recording reserves a matching release; flush fails closed if full', () => {
-    assert.strictEqual(draft.maxActionCount(), 2031);
+    const max = draft.maxActionCount();
+    assert.strictEqual(max, 1007);
     const slots = draft.emptySlots();
-    slots[0].actions = Array.from({ length: 2029 }, () => ({ action: 'keydown', code: 4, delay: 5 }));
+    slots[0].actions = Array.from({ length: max - 2 }, () => ({ action: 'keydown', code: 4, delay: 5 }));
     assert.strictEqual(draft.canRecordDown(slots, 0), true);
     slots[0].actions.push({ action: 'keydown', code: 4, delay: 5 });
     assert.strictEqual(draft.canRecordDown(slots, 1), false);
@@ -572,22 +573,21 @@ describe('Review item 7: Vendor-identical action-body deduplication and delay 0.
 
   test('multiple slots sharing identical long macros calculate storage only once', () => {
     const slots = draft.emptySlots();
-    const longMacro = Array.from({ length: 1500 }, (_, i) => ({
+    // Assign same 700-action macro to slots 0, 1, 2, 3
+    const longMacro = Array.from({ length: 700 }, (_, i) => ({
       action: i % 2 === 0 ? 'keydown' : 'keyup',
       code: 4 + (i % 20),
       delay: 20
     }));
-
-    // Assign same 1500-action macro to slots 0, 1, 2, 3
     slots[0].actions = draft.deepCopyActions(longMacro);
     slots[1].actions = draft.deepCopyActions(longMacro);
     slots[2].actions = draft.deepCopyActions(longMacro);
     slots[3].actions = draft.deepCopyActions(longMacro);
 
-    // Dedup size: 68 + 1500 * 4 = 6068 bytes
+    // Dedup size: 68 + 700 * 4 = 2868 bytes
     const bytes = draft.calculateMacroBankBytes(slots);
-    assert.strictEqual(bytes, 68 + 1500 * 4);
-    assert.ok(bytes <= draft.SHARED_MACRO_SIZE);
+    assert.strictEqual(bytes, 68 + 700 * 4);
+    assert.ok(bytes <= draft.MACRO_WRITABLE_LIMIT);
 
     // Schema validator accepts it
     const val = validators.validateMacroSlots(slots);
@@ -597,18 +597,18 @@ describe('Review item 7: Vendor-identical action-body deduplication and delay 0.
 
 describe('Review item 8: Prospective bank-state check rejects divergence on all edits', () => {
   test('divergence overflow rejected on Add, Insert, Paste, Replace, Delete, Reorder, delay edit', () => {
-    // Setup two duplicate slots sharing 1500 actions (6068 bytes, fits in 8192)
+    // Setup two duplicate slots sharing 700 actions (2868 bytes, fits in 4096)
     const slots = draft.emptySlots();
-    const longMacro = Array.from({ length: 1500 }, (_, i) => ({
+    const longMacro = Array.from({ length: 700 }, (_, i) => ({
       action: i % 2 === 0 ? 'keydown' : 'keyup',
       code: 4 + (i % 20),
       delay: 20
     }));
     slots[0].actions = draft.deepCopyActions(longMacro);
     slots[1].actions = draft.deepCopyActions(longMacro);
-    assert.strictEqual(draft.calculateMacroBankBytes(slots), 6068);
+    assert.strictEqual(draft.calculateMacroBankBytes(slots), 2868);
 
-    // 1. Add action to slot 0: diverges slot 0 (1501) and slot 1 (1500) -> 3001 unique actions = 12072 bytes > 8192
+    // 1. Add action to slot 0: diverges slot 0 (701) and slot 1 (700) -> 1401 unique actions = 5672 bytes > 4096
     const addCandidate = slots[0].actions.concat([{ action: 'keydown', code: 25, delay: 20 }]);
     assert.strictEqual(draft.canMutateSlot(slots, 0, addCandidate), false);
 
@@ -626,7 +626,7 @@ describe('Review item 8: Prospective bank-state check rejects divergence on all 
     draft.replaceActionAtIndex(replaceCandidate, 0, { actionType: 'keydown', code: 9 });
     assert.strictEqual(draft.canMutateSlot(slots, 0, replaceCandidate), false);
 
-    // 5. Delete action from slot 0: 1499 actions in slot 0 + 1500 in slot 1 = 2999 unique actions = 12064 bytes > 8192
+    // 5. Delete action from slot 0: 699 actions in slot 0 + 700 in slot 1 = 1399 unique actions = 5664 bytes > 4096
     const deleteCandidate = slots[0].actions.slice(1);
     assert.strictEqual(draft.canMutateSlot(slots, 0, deleteCandidate), false);
 
@@ -654,19 +654,19 @@ describe('Review item 8: Prospective bank-state check rejects divergence on all 
 describe('Review item 9: Recording preflight reserves releases on duplicate shared slots', () => {
   test('canRecordDown reserves matching release and held releases on shared slots', () => {
     const slots = draft.emptySlots();
-    // 2029 actions in slot 0
-    slots[0].actions = Array.from({ length: 2029 }, () => ({ action: 'keydown', code: 4, delay: 5 }));
-    // 2029 actions: 0 held -> down + matching release = 2031 actions = 8192 bytes (fits)
+    // 1005 actions in slot 0
+    slots[0].actions = Array.from({ length: 1005 }, () => ({ action: 'keydown', code: 4, delay: 5 }));
+    // 1005 actions: 0 held -> down + matching release = 1007 actions = 4096 bytes (fits)
     assert.strictEqual(draft.canRecordDown(slots, 0, 0), true);
-    // with 1 held key -> down + matching release + 1 held release = 2032 actions > 2031 (fails)
+    // with 1 held key -> down + matching release + 1 held release = 1008 actions > 1007 (fails)
     assert.strictEqual(draft.canRecordDown(slots, 1, 0), false);
 
     // On shared duplicate long slots: recording in slot 0 causes divergence from slot 1
     const sharedSlots = draft.emptySlots();
-    const longMacro = Array.from({ length: 1500 }, () => ({ action: 'keydown', code: 4, delay: 5 }));
+    const longMacro = Array.from({ length: 700 }, () => ({ action: 'keydown', code: 4, delay: 5 }));
     sharedSlots[0].actions = draft.deepCopyActions(longMacro);
     sharedSlots[1].actions = draft.deepCopyActions(longMacro);
-    // Recording down in slot 0 will diverge slot 0 and require 1500 + 1502 actions > 2031 actions!
+    // Recording down in slot 0 will diverge slot 0 and require 700 + 702 actions > 1007 actions!
     assert.strictEqual(draft.canRecordDown(sharedSlots, 0, 0), false);
   });
 });
@@ -681,25 +681,25 @@ describe('Review corrections: Non-dummy reservations, candidate checks & atomic 
       { action: 'keydown', code: 250, delay: 65530 },
       { action: 'keyup', code: 232, delay: 65500 }
     ];
-    // Fill slot 1 up to 1000 actions
-    while (importedWithSentinels.length < 1000) {
+    // Fill slot 1 up to 500 actions
+    while (importedWithSentinels.length < 500) {
       importedWithSentinels.push({ action: 'keydown', code: 4, delay: 20 });
     }
     slots[1].actions = importedWithSentinels;
 
-    // Slot 0 has 1031 actions. Total bank actions = 1000 + 1031 = 2031 actions (exact bank maximum: 8192 bytes).
-    slots[0].actions = Array.from({ length: 1031 }, () => ({ action: 'keydown', code: 5, delay: 20 }));
-    assert.strictEqual(draft.calculateMacroBankBytes(slots), 8192);
+    // Slot 0 has 507 actions. Total bank actions = 500 + 507 = 1007 actions (exact bank maximum: 4096 bytes).
+    slots[0].actions = Array.from({ length: 507 }, () => ({ action: 'keydown', code: 5, delay: 20 }));
+    assert.strictEqual(draft.calculateMacroBankBytes(slots), 4096);
 
-    // If slot 0 attempts to mutate with 1 reserved release (would require 1032 actions in slot 0),
-    // it must NOT collide with slot 1 or alias to admit 2032 actions.
+    // If slot 0 attempts to mutate with 1 reserved release (would require 508 actions in slot 0),
+    // it must NOT collide with slot 1 or alias to admit 1008 actions.
     const candidate0 = slots[0].actions.slice();
     assert.strictEqual(draft.canMutateSlot(slots, 0, candidate0, 1), false);
 
     // Even if slot 0 candidate actions literally end with the old fake sentinel actions:
     const candidateMatchingSentinel = slots[0].actions.slice();
     candidateMatchingSentinel.push({ action: 'keydown', code: 250, delay: 65530 });
-    // Candidate + 1 reserved release = 1031 + 1 + 1 = 1033 actions -> must strictly reject
+    // Candidate + 1 reserved release = 507 + 1 + 1 = 509 actions -> must strictly reject
     assert.strictEqual(draft.canMutateSlot(slots, 0, candidateMatchingSentinel, 1), false);
   });
 
@@ -712,7 +712,7 @@ describe('Review corrections: Non-dummy reservations, candidate checks & atomic 
     // In new code, no dummy actions or delay arithmetic are generated.
     assert.strictEqual(draft.canMutateSlot(slots, 0, slots[0].actions, 100), true);
 
-    // 200 held inputs on a macro with 1900 actions: 1900 + 200 = 2100 actions > 2031 max.
+    // 200 held inputs on a macro with 1900 actions: 1900 + 200 = 2100 actions > 1007 max (draft.maxActionCount()).
     // Must return false without throwing RangeError, NaN, or arithmetic overflow.
     const bigSlot = draft.emptySlots();
     bigSlot[0].actions = Array.from({ length: 1900 }, () => ({ action: 'keydown', code: 4, delay: 20 }));
@@ -728,9 +728,11 @@ describe('Review corrections: Non-dummy reservations, candidate checks & atomic 
   });
 
   test('rejected record leaves draft untouched (zero draft mutation)', () => {
+    const max = draft.maxActionCount();
+    const nearFull = max - 1;
     const slots = draft.emptySlots();
-    // 2030 actions: room for exactly 1 more action in the bank (max 2031)
-    const initialActions = Array.from({ length: 2030 }, (_, i) => ({
+    // 1006 actions: room for exactly 1 more action in the bank (max 1007)
+    const initialActions = Array.from({ length: nearFull }, (_, i) => ({
       action: 'keydown',
       code: 4 + (i % 20),
       delay: 20
@@ -738,7 +740,7 @@ describe('Review corrections: Non-dummy reservations, candidate checks & atomic 
     slots[0].actions = draft.deepCopyActions(initialActions);
 
     // Simulate record event candidate for down: needs room for down + 1 matching release (2 actions)
-    // 2030 + 2 = 2032 > 2031 -> rejected!
+    // 1006 + 2 = 1008 > 1007 -> rejected!
     const candidate = draft.deepCopyActions(slots[0].actions);
     draft.applyTrailingRecordedEvent(candidate, {
       action: 'keydown',
@@ -753,15 +755,17 @@ describe('Review corrections: Non-dummy reservations, candidate checks & atomic 
     assert.strictEqual(canFit, false);
 
     // Verify draft slots[0].actions was NOT mutated
-    assert.strictEqual(slots[0].actions.length, 2030);
-    assert.strictEqual(slots[0].actions[2029].delay, 20); // trailing delay untouched!
+    assert.strictEqual(slots[0].actions.length, nearFull);
+    assert.strictEqual(slots[0].actions[nearFull - 1].delay, 20); // trailing delay untouched!
     assert.deepStrictEqual(slots[0].actions, initialActions);
   });
 
   test('rejected flush leaves draft untouched (zero draft mutation)', () => {
+    const max = draft.maxActionCount();
+    const nearFull = max - 1;
     const slots = draft.emptySlots();
-    // 2030 actions: room for 1 more action
-    const initialActions = Array.from({ length: 2030 }, (_, i) => ({
+    // 1006 actions: room for 1 more action (max 1007)
+    const initialActions = Array.from({ length: nearFull }, (_, i) => ({
       action: 'keydown',
       code: 4 + (i % 20),
       delay: 25
@@ -791,13 +795,13 @@ describe('Review corrections: Non-dummy reservations, candidate checks & atomic 
       });
     }
 
-    // 2030 + 2 = 2032 > 2031 -> must reject
+    // 1006 + 2 = 1008 > 1007 -> must reject
     const canFit = draft.canMutateSlot(slots, 0, candidate, 0);
     assert.strictEqual(canFit, false);
 
     // Verify original draft actions completely untouched
-    assert.strictEqual(slots[0].actions.length, 2030);
-    assert.strictEqual(slots[0].actions[2029].delay, 25); // untouched, NOT mutated to 5000!
+    assert.strictEqual(slots[0].actions.length, nearFull);
+    assert.strictEqual(slots[0].actions[nearFull - 1].delay, 25); // untouched, NOT mutated to 5000!
     assert.deepStrictEqual(slots[0].actions, initialActions);
     assert.strictEqual(draft.heldCount(pressed), 2); // pressed map untouched
   });

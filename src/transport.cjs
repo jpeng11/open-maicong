@@ -1189,10 +1189,12 @@ class DeviceTransport {
     return this.runTransaction(async (startGen) => {
       const startEpoch = this.resetEpoch;
       const stillCurrent = () => this.device && this.generation === startGen && this.resetEpoch === startEpoch;
-      let readAnySuccess = false;
+      let infoRes = null;
+      let baseRes = null;
+      let funcRes = null;
       try {
         // 1. Read Device Info (CMD 3)
-        const infoRes = await this.readRange(protocol.COMMANDS.GET_INFO, 0, 56, 800, startGen);
+        infoRes = await this.readRange(protocol.COMMANDS.GET_INFO, 0, 56, 800, startGen);
         if (!stillCurrent()) {
           return {
             ...this.lastState,
@@ -1203,7 +1205,6 @@ class DeviceTransport {
           };
         }
         if (infoRes.success) {
-          readAnySuccess = true;
           const parsedInfo = protocol.parseInfo(infoRes.data);
           if (parsedInfo) {
             this.lastState.info = parsedInfo;
@@ -1212,7 +1213,7 @@ class DeviceTransport {
         }
 
         // 2. Read Base Info (CMD 4)
-        const baseRes = await this.readRange(protocol.COMMANDS.GET_BASE, 0, 56, 800, startGen);
+        baseRes = await this.readRange(protocol.COMMANDS.GET_BASE, 0, 56, 800, startGen);
         if (!stillCurrent()) {
           return {
             ...this.lastState,
@@ -1223,7 +1224,6 @@ class DeviceTransport {
           };
         }
         if (baseRes.success) {
-          readAnySuccess = true;
           const parsedBase = protocol.parseBase(baseRes.data);
           if (parsedBase) {
             this.lastState.base = {
@@ -1237,35 +1237,9 @@ class DeviceTransport {
           }
         }
 
-        const namesRes = await this.readRange(
-          protocol.COMMANDS.GET_CUSTOM_PARAM,
-          profileNames.namesOffset(0),
-          profileNames.PROFILE_NAMES_LENGTH,
-          800,
-          startGen
-        );
-        if (!stillCurrent()) {
-          return {
-            ...this.lastState,
-            readSuccess: false,
-            aborted: true,
-            needsReconnect: this.needsReconnect,
-            statusError: this.statusError
-          };
-        }
-        if (namesRes.success && namesRes.data && namesRes.data.length === profileNames.PROFILE_NAMES_LENGTH) {
-          const decoded = profileNames.decodeProfileNames(namesRes.data);
-          if (decoded.valid) {
-            this._applyStoredProfileNames(decoded.stored, decoded.empty ? 'default' : 'hardware');
-          }
-        } else if (!this.lastState.profileNames) {
-          this._applyStoredProfileNames(['', '', '', ''], 'default');
-        }
-        this._loadProfileLibrary();
-
         // 3. Read FuncConfig for active profile (CMD 5, 64 bytes)
         const activeProfile = this.lastState.activeProfileIndex || 0;
-        const funcRes = await this.readRange(protocol.COMMANDS.GET_FUNC_CONFIG, 64 * activeProfile, 64, 800, startGen);
+        funcRes = await this.readRange(protocol.COMMANDS.GET_FUNC_CONFIG, 64 * activeProfile, 64, 800, startGen);
         if (!stillCurrent()) {
           return {
             ...this.lastState,
@@ -1276,7 +1250,6 @@ class DeviceTransport {
           };
         }
         if (funcRes.success) {
-          readAnySuccess = true;
           const parsedFunc = protocol.parseFuncConfig(funcRes.data);
           if (parsedFunc) {
             this.lastState.battery = {
@@ -1298,17 +1271,56 @@ class DeviceTransport {
             this._rawFuncConfig = parsedFunc.rawBytes;
           }
         }
+
+        // 4. Optional Profile Names Query (CMD 241 / 0xF1, GET_CUSTOM_PARAM)
+        // Kept separate from required handshake (CMD 3, 4, 5).
+        // If device returns non-zero status or fails cleanly, fall back to default profile names.
+        // If a transport timeout occurs on the wire, timeout safety forces needsReconnect to prevent queue poisoning.
+        if (infoRes && infoRes.success && baseRes && baseRes.success && funcRes && funcRes.success && !this.needsReconnect) {
+          const namesRes = await this.readRange(
+            protocol.COMMANDS.GET_CUSTOM_PARAM,
+            profileNames.namesOffset(0),
+            profileNames.PROFILE_NAMES_LENGTH,
+            800,
+            startGen
+          );
+          if (!stillCurrent()) {
+            return {
+              ...this.lastState,
+              readSuccess: false,
+              aborted: true,
+              needsReconnect: this.needsReconnect,
+              statusError: this.statusError
+            };
+          }
+          if (namesRes.success && namesRes.data && namesRes.data.length === profileNames.PROFILE_NAMES_LENGTH) {
+            const decoded = profileNames.decodeProfileNames(namesRes.data);
+            if (decoded.valid) {
+              this._applyStoredProfileNames(decoded.stored, decoded.empty ? 'default' : 'hardware');
+            }
+          } else if (!this.lastState.profileNames) {
+            this._applyStoredProfileNames(['', '', '', ''], 'default');
+          }
+          this._loadProfileLibrary();
+        }
       } catch (err) {
         console.warn('[Transport] queryStatus encountered error:', err.message);
       }
 
-      this.lastReadSuccess = readAnySuccess;
-      if (readAnySuccess) {
+      const allRequiredSuccess = Boolean(
+        infoRes && infoRes.success &&
+        baseRes && baseRes.success &&
+        funcRes && funcRes.success &&
+        !this.needsReconnect
+      );
+
+      this.lastReadSuccess = allRequiredSuccess;
+      if (allRequiredSuccess) {
         this.statusError = null;
       }
       return {
         ...this.lastState,
-        readSuccess: readAnySuccess,
+        readSuccess: allRequiredSuccess,
         needsReconnect: this.needsReconnect,
         statusError: this.statusError
       };
@@ -1374,12 +1386,12 @@ class DeviceTransport {
       return { success: false, error: 'Device not connected or requires reconnect' };
     }
 
-    const res = await this.readRange(protocol.COMMANDS.GET_MACROS, 0, protocol.SHARED_MACRO_SIZE, 1500);
+    const res = await this.readRange(protocol.COMMANDS.GET_MACROS, 0, protocol.MACRO_READ_WINDOW_SIZE, 1500);
     if (!res.success) {
       return res;
     }
-    if (!res.data || res.data.length !== protocol.SHARED_MACRO_SIZE) {
-      return { success: false, error: `Incomplete macro region read: expected ${protocol.SHARED_MACRO_SIZE} bytes, got ${res.data ? res.data.length : 0}` };
+    if (!res.data || res.data.length !== protocol.MACRO_READ_WINDOW_SIZE) {
+      return { success: false, error: `Incomplete macro region read: expected ${protocol.MACRO_READ_WINDOW_SIZE} bytes, got ${res.data ? res.data.length : 0}` };
     }
 
     this._rawMacroRegion = res.data;
@@ -1722,11 +1734,11 @@ class DeviceTransport {
         const macroRes = await this.readRange(
           protocol.COMMANDS.GET_MACROS,
           0,
-          protocol.SHARED_MACRO_SIZE,
+          protocol.MACRO_READ_WINDOW_SIZE,
           1500,
           startGen
         );
-        if (!macroRes.success || !macroRes.data || macroRes.data.length !== protocol.SHARED_MACRO_SIZE) {
+        if (!macroRes.success || !macroRes.data || macroRes.data.length !== protocol.MACRO_READ_WINDOW_SIZE) {
           return { success: false, error: `Failed to read macro bank before paste: ${macroRes.error || 'incomplete read'}` };
         }
         let parsedMacros;
@@ -3824,9 +3836,9 @@ class DeviceTransport {
 
     return this.runTransaction(async (startGen) => {
       const completedSections = [];
-      const readRes = await this.readRange(protocol.COMMANDS.GET_MACROS, 0, protocol.SHARED_MACRO_SIZE, 1500, startGen);
-      if (!readRes.success || !readRes.data || readRes.data.length !== protocol.SHARED_MACRO_SIZE) {
-        return { success: false, error: `Failed to read complete 8192-byte macro region before write: ${readRes.error || 'incomplete read'}` };
+      const readRes = await this.readRange(protocol.COMMANDS.GET_MACROS, 0, protocol.MACRO_READ_WINDOW_SIZE, 1500, startGen);
+      if (!readRes.success || !readRes.data || readRes.data.length !== protocol.MACRO_READ_WINDOW_SIZE) {
+        return { success: false, error: `Failed to read complete ${protocol.MACRO_READ_WINDOW_SIZE}-byte macro region before write: ${readRes.error || 'incomplete read'}` };
       }
 
       let existingSlots;
@@ -3989,9 +4001,9 @@ class DeviceTransport {
         }
       }
 
-      // 4. Read macros (shared 8192-byte region)
-      const macroRes = await this.readRange(protocol.COMMANDS.GET_MACROS, 0, protocol.SHARED_MACRO_SIZE, 1500, startGen);
-      if (!macroRes.success || !macroRes.data || macroRes.data.length !== protocol.SHARED_MACRO_SIZE) {
+      // 4. Read macros (shared 8192-byte read window)
+      const macroRes = await this.readRange(protocol.COMMANDS.GET_MACROS, 0, protocol.MACRO_READ_WINDOW_SIZE, 1500, startGen);
+      if (!macroRes.success || !macroRes.data || macroRes.data.length !== protocol.MACRO_READ_WINDOW_SIZE) {
         return { success: false, error: `Failed to read macro region: ${macroRes.error || 'incomplete read'}` };
       }
       const macros = protocol.parseMacroRegion(macroRes.data);
@@ -4186,8 +4198,8 @@ class DeviceTransport {
       let preparedMacros = null;
       let existingMacroSlots = null;
       if (hasMacros) {
-        const macroRes = await this.readRange(protocol.COMMANDS.GET_MACROS, 0, protocol.SHARED_MACRO_SIZE, 1500, startGen);
-        if (!macroRes.success || !macroRes.data || macroRes.data.length !== protocol.SHARED_MACRO_SIZE) {
+        const macroRes = await this.readRange(protocol.COMMANDS.GET_MACROS, 0, protocol.MACRO_READ_WINDOW_SIZE, 1500, startGen);
+        if (!macroRes.success || !macroRes.data || macroRes.data.length !== protocol.MACRO_READ_WINDOW_SIZE) {
           return { success: false, error: `Failed to read macro region before write: ${macroRes.error || 'incomplete read'}` };
         }
         try {
@@ -5301,7 +5313,7 @@ class DeviceTransport {
     if (!Array.isArray(payload.macros) || payload.macros.length === 0) {
       return { success: true, payload };
     }
-    const currentMacros = await this.readRange(protocol.COMMANDS.GET_MACROS, 0, protocol.SHARED_MACRO_SIZE, 1500, startGen);
+    const currentMacros = await this.readRange(protocol.COMMANDS.GET_MACROS, 0, protocol.MACRO_READ_WINDOW_SIZE, 1500, startGen);
     if (!this._profileStillCurrent(startGen, startEpoch)) {
       return { success: false, error: 'Device identity changed while reading macros' };
     }

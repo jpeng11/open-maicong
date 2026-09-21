@@ -16,7 +16,8 @@ describe('GLW Keyboard Protocol Encoder & Decoder (Verified Hardware)', () => {
     assert.strictEqual(protocol.USED_KEY_AREA_SIZE, 384);
     assert.strictEqual(protocol.MAX_LAYERS, 4);
     assert.strictEqual(protocol.MAX_MACRO_SLOTS, 16);
-    assert.strictEqual(protocol.SHARED_MACRO_SIZE, 8192);
+    assert.strictEqual(protocol.MACRO_READ_WINDOW_SIZE, 8192);
+    assert.strictEqual(protocol.MACRO_WRITABLE_LIMIT, 4096);
 
     assert.strictEqual(protocol.COMMANDS.GET_INFO, 3);
     assert.strictEqual(protocol.COMMANDS.GET_BASE, 4);
@@ -298,14 +299,14 @@ describe('GLW Keyboard Protocol Encoder & Decoder (Verified Hardware)', () => {
     slots[0].actions.push({ action: 'keyup', code: 4, delay: 20 });
 
     const serialized = protocol.serializeMacroRegion(slots, macroBuf);
-    assert.strictEqual(serialized.length, 8192);
+    assert.strictEqual(serialized.length, 4096);
 
     const reparsed = protocol.parseMacroRegion(serialized);
     assert.strictEqual(reparsed[0].actions.length, 2);
 
-    // Overflow test: create 3000 actions (3000 * 4 = 12000 bytes > 8192)
+    // Overflow test: create 1100 actions (1100 * 4 = 4400 bytes > 4096)
     const giantActions = [];
-    for (let i = 0; i < 2500; i++) {
+    for (let i = 0; i < 1100; i++) {
       giantActions.push({ action: 'keydown', code: 4, delay: 20 });
     }
     slots[1].actions = giantActions;
@@ -317,8 +318,8 @@ describe('GLW Keyboard Protocol Encoder & Decoder (Verified Hardware)', () => {
     const baseline = getBaseline();
     const macroBuf = Buffer.from(baseline.macros, 'hex');
 
-    // Create a 1500-action macro body (1500 * 4 = 6000 bytes)
-    const longActions = Array.from({ length: 1500 }, (_, i) => ({
+    // Create a 700-action macro body (700 * 4 = 2800 bytes)
+    const longActions = Array.from({ length: 700 }, (_, i) => ({
       action: i % 2 === 0 ? 'keydown' : 'keyup',
       code: 4 + (i % 20),
       delay: 20
@@ -335,7 +336,7 @@ describe('GLW Keyboard Protocol Encoder & Decoder (Verified Hardware)', () => {
     ];
 
     const serialized = protocol.serializeMacroRegion(slots, macroBuf);
-    assert.strictEqual(serialized.length, 8192);
+    assert.strictEqual(serialized.length, 4096);
 
     // Verify offsets for slots 0, 1, 2 are all identical and point to 68
     const off0 = serialized[0] | (serialized[1] << 8);
@@ -352,9 +353,9 @@ describe('GLW Keyboard Protocol Encoder & Decoder (Verified Hardware)', () => {
 
     // Readback parses all slots correctly with independent action arrays
     const parsed = protocol.parseMacroRegion(serialized);
-    assert.strictEqual(parsed[0].actions.length, 1500);
-    assert.strictEqual(parsed[1].actions.length, 1500);
-    assert.strictEqual(parsed[2].actions.length, 1500);
+    assert.strictEqual(parsed[0].actions.length, 700);
+    assert.strictEqual(parsed[1].actions.length, 700);
+    assert.strictEqual(parsed[2].actions.length, 700);
     assert.strictEqual(parsed[0].type, 0);
     assert.strictEqual(parsed[1].type, 1);
     assert.strictEqual(parsed[2].type, 255);
@@ -403,24 +404,24 @@ describe('GLW Keyboard Protocol Encoder & Decoder (Verified Hardware)', () => {
     assert.strictEqual(reparsed[0].actions[2].code, 6);
   });
 
-  test('exact bank boundaries: 2031 unique actions accepted at 8192 bytes, 2032 rejected with RangeError', () => {
+  test('exact bank boundaries: 1007 unique actions accepted at 4096 bytes, 1008 rejected with RangeError', () => {
     const baseline = getBaseline();
     const macroBuf = Buffer.from(baseline.macros, 'hex');
 
-    // 2031 actions: 68 + 2031 * 4 = 8192 bytes (exact boundary)
-    const exactActions = Array.from({ length: 2031 }, (_, i) => ({
+    // 1007 actions: 68 + 1007 * 4 = 4096 bytes (exact conservative writable boundary)
+    const exactActions = Array.from({ length: 1007 }, (_, i) => ({
       action: 'keydown',
       code: 4 + (i % 20),
       delay: 5
     }));
 
     const exactBuf = protocol.serializeMacroRegion([{ id: 0, type: 0, actions: exactActions }], macroBuf);
-    assert.strictEqual(exactBuf.length, 8192);
+    assert.strictEqual(exactBuf.length, 4096);
     const parsedExact = protocol.parseMacroRegion(exactBuf);
-    assert.strictEqual(parsedExact[0].actions.length, 2031);
+    assert.strictEqual(parsedExact[0].actions.length, 1007);
 
-    // 2032 actions: 68 + 2032 * 4 = 8196 bytes (exceeds 8192)
-    const overflowActions = Array.from({ length: 2032 }, (_, i) => ({
+    // 1008 actions: 68 + 1008 * 4 = 4100 bytes (exceeds 4096)
+    const overflowActions = Array.from({ length: 1008 }, (_, i) => ({
       action: 'keydown',
       code: 4 + (i % 20),
       delay: 5
@@ -439,8 +440,8 @@ describe('GLW Keyboard Protocol Encoder & Decoder (Verified Hardware)', () => {
       macroBuf[b] = 0xA0 + (b - 50);
     }
 
-    // Write distinctive test sentinels into tail bytes beyond written bodies
-    for (let b = 100; b < 8192; b++) {
+    // Write distinctive test sentinels into tail bytes beyond written bodies in safe range (100..4095)
+    for (let b = 100; b < 4096; b++) {
       macroBuf[b] = (b * 17) & 0xFF;
     }
 
@@ -461,18 +462,18 @@ describe('GLW Keyboard Protocol Encoder & Decoder (Verified Hardware)', () => {
     assert.strictEqual(serialized[0], 68);
     assert.strictEqual(serialized[1], 0);
 
-    // Verify untouched tail bytes from 100 to 8191 are preserved (not zeroed out)
-    for (let b = 100; b < 8192; b++) {
+    // Verify untouched tail bytes from 100 to 4095 are preserved (not zeroed out)
+    for (let b = 100; b < 4096; b++) {
       assert.strictEqual(serialized[b], (b * 17) & 0xFF, `tail byte ${b} must not be zeroed`);
     }
   });
 
-  test('parseMacroRegion throws when macro region is unterminated', () => {
+  test('parseMacroRegion throws when macro region is unterminated within safe writable limit', () => {
     const baseline = getBaseline();
     const corruptMacroBuf = Buffer.from(baseline.macros, 'hex');
 
-    // Overwrite slot 0 with non-terminating actions filling all bytes up to 8192
-    for (let off = 64; off < 8192; off += 4) {
+    // Overwrite slot 0 with non-terminating actions filling all bytes up to 4096
+    for (let off = 64; off < 4096; off += 4) {
       corruptMacroBuf[off] = 20;
       corruptMacroBuf[off + 1] = 0;
       corruptMacroBuf[off + 2] = 66; // keydown, kind 2 (HID), no isEnd flag
@@ -480,6 +481,19 @@ describe('GLW Keyboard Protocol Encoder & Decoder (Verified Hardware)', () => {
     }
 
     assert.throws(() => protocol.parseMacroRegion(corruptMacroBuf), /unterminated/i);
+  });
+
+  test('parseMacroRegion rejects offsets pointing into protected aliased tail (>= 4096)', () => {
+    const baseline = getBaseline();
+    const corruptMacroBuf = Buffer.from(baseline.macros, 'hex');
+
+    // Point slot 0 offset to 4096 (profile 0 color matrix alias boundary)
+    corruptMacroBuf[0] = 0x00;
+    corruptMacroBuf[1] = 0x10; // 4096
+    assert.throws(
+      () => protocol.parseMacroRegion(corruptMacroBuf),
+      /Invalid macro offset at slot 0: 4096\. Must be 4-byte aligned and between 64 and 4092/
+    );
   });
 
   test('parseDeviceInfo accurately parses firmware version, build date, and receiver from hardware reply', () => {

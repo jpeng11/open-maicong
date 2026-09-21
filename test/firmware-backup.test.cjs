@@ -142,7 +142,7 @@ test('complete backup captures reordered enabled profiles, four full layers, nam
     assert.equal(profile.advanced.keyExtrasHex.length, protocol.KEY_EXTRAS_SIZE * 2);
     assert.equal(profile.advanced.customParamHex.length, protocol.CB_CUSTOM_PARAM_LENGTH * 2);
   }
-  assert.equal(result.backup.macros.rawHex.length, protocol.SHARED_MACRO_SIZE * 2);
+  assert.equal(result.backup.macros.rawHex.length, protocol.MACRO_READ_WINDOW_SIZE * 2);
   assert.equal(result.backup.names.regions.length, 4);
   assert.equal(result.backup.featureSupport.length, 4);
   assert.equal(result.backup.globals.predicate, 'layout.isGlobalKey === true');

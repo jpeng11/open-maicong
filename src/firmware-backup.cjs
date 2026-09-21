@@ -358,7 +358,7 @@ async function captureInTransaction(transport, startGen, options) {
       featureRegions.push({ slot, rawHex: toHex(featureRaw), support: decodedFeature.support });
     }
 
-    const macrosRaw = await read(protocol.COMMANDS.GET_MACROS, 0, protocol.SHARED_MACRO_SIZE, 'shared-macros');
+    const macrosRaw = await read(protocol.COMMANDS.GET_MACROS, 0, protocol.MACRO_READ_WINDOW_SIZE, 'shared-macros');
     let macros;
     try {
       macros = protocol.parseMacroRegion(macrosRaw);
@@ -705,7 +705,7 @@ async function restoreInTransaction(transport, startGen, backup, options) {
     const currentBaseRaw = await read(protocol.COMMANDS.GET_BASE, 0, 56, 'current-base');
     const currentBase = protocol.parseBase(currentBaseRaw);
     if (!currentBase) throw new FirmwareBackupError('Current post-firmware base is malformed', 'current-base');
-    const currentMacrosRaw = await read(protocol.COMMANDS.GET_MACROS, 0, protocol.SHARED_MACRO_SIZE, 'current-macros');
+    const currentMacrosRaw = await read(protocol.COMMANDS.GET_MACROS, 0, protocol.MACRO_READ_WINDOW_SIZE, 'current-macros');
     let currentMacroSlots;
     try { currentMacroSlots = protocol.parseMacroRegion(currentMacrosRaw); } catch (err) {
       throw new FirmwareBackupError(`Current post-firmware macro bank is malformed: ${err.message}`, 'current-macros');
@@ -828,7 +828,7 @@ async function restoreInTransaction(transport, startGen, backup, options) {
     if (!finalParsed || finalParsed.activeProfile !== backup.base.activeProfile || finalParsed.profileCount !== backup.base.profileLength || finalParsed.profileOrder.some((value, i) => value !== backup.base.profileOrder[i])) {
       throw new FirmwareBackupError('Final base readback does not match the restored profile topology', 'final-base', { uncertain: true });
     }
-    const finalMacros = await read(protocol.COMMANDS.GET_MACROS, 0, protocol.SHARED_MACRO_SIZE, 'final-macros');
+    const finalMacros = await read(protocol.COMMANDS.GET_MACROS, 0, protocol.MACRO_READ_WINDOW_SIZE, 'final-macros');
     try { protocol.parseMacroRegion(finalMacros); } catch (err) {
       throw new FirmwareBackupError(`Final macro readback is malformed: ${err.message}`, 'final-macros', { uncertain: true });
     }
@@ -898,7 +898,7 @@ function validateFirmwareBackup(backup) {
     }
     if (featureSlots.size !== protocol.MAX_KEYBOARD_PROFILES) throw new FirmwareBackupError('Backup feature-support slots are incomplete', 'feature-support');
 
-    const macrosRaw = exactBuffer(backup.macros && backup.macros.rawHex, protocol.SHARED_MACRO_SIZE, 'shared-macros');
+    const macrosRaw = exactBuffer(backup.macros && backup.macros.rawHex, protocol.MACRO_READ_WINDOW_SIZE, 'shared-macros');
     const parsedMacros = protocol.parseMacroRegion(macrosRaw);
     if (!Array.isArray(backup.macros.slots) || backup.macros.slots.length !== parsedMacros.length) throw new FirmwareBackupError('Backup macro slot list is incomplete', 'shared-macros');
     if (JSON.stringify(backup.macros.slots) !== JSON.stringify(parsedMacros)) throw new FirmwareBackupError('Backup macro slot metadata does not match its raw bytes', 'shared-macros');

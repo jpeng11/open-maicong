@@ -11,7 +11,7 @@ const {
   getDefaultTuple,
   getComplementPriority
 } = require('./layout-g75v2.cjs');
-const { calculateMacroBankBytes } = require('./macro-draft.js');
+const { calculateMacroBankBytes, MACRO_WRITABLE_LIMIT } = require('./macro-draft.js');
 const lightingMemory = require('./lighting-memory.cjs');
 
 // Valid GLW Key Types (Verified Hardware)
@@ -587,7 +587,7 @@ function rgbToHex(r, g, b) {
 
 /**
  * Validates macro slots array.
- * Validates slots, types, actions, action kinds, codes, delays, and 8192-byte capacity.
+ * Validates slots, types, actions, action kinds, codes, delays, and 4096-byte capacity.
  * Requires code and delay for every action.
  * Rejects unknown keys recursively.
  *
@@ -675,10 +675,10 @@ function validateMacroSlots(slots) {
     }
   }
 
-  // Preflight 8192-byte capacity with vendor-identical action-body deduplication
+  // Preflight 4096-byte capacity with vendor-identical action-body deduplication
   const totalBytes = calculateMacroBankBytes(slots);
-  if (totalBytes > 8192) {
-    return { valid: false, error: `Total macro storage capacity exceeded: requires ${totalBytes} bytes, max 8192 bytes` };
+  if (totalBytes > MACRO_WRITABLE_LIMIT) {
+    return { valid: false, error: `Total macro storage capacity exceeded: requires ${totalBytes} bytes, max ${MACRO_WRITABLE_LIMIT} bytes` };
   }
 
   return { valid: true };

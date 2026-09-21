@@ -237,7 +237,7 @@ describe('Adversarial Mocked Transport & Safety Verification', () => {
     assert.strictEqual(mock.writtenBuffers.length, 0);
   });
 
-  test('7. Macro storage overflow rejection: refuses to write macro actions exceeding 8192 bytes', async () => {
+  test('7. Macro storage overflow rejection: refuses to write macro actions exceeding 4096 bytes', async () => {
     const mock = new MockHIDDevice();
     const macroBytes = Buffer.from(baseline.macros, 'hex');
 
@@ -254,9 +254,9 @@ describe('Adversarial Mocked Transport & Safety Verification', () => {
 
     attachMockDevice(mock);
 
-    // Build 2500 actions (10,000 bytes > 8192)
+    // Build 1500 actions (6,000 bytes > 4096)
     const giantActions = [];
-    for (let i = 0; i < 2500; i++) {
+    for (let i = 0; i < 1500; i++) {
       giantActions.push({ action: 'keydown', code: 4, delay: 20 });
     }
 
@@ -287,9 +287,9 @@ describe('Adversarial Mocked Transport & Safety Verification', () => {
 
     attachMockDevice(mock);
 
-    // Slot 0 has 1100 unique actions; Slot 1 has 1100 DIFFERENT unique actions -> 2200 total unique > 2031
-    const acts0 = Array.from({ length: 1100 }, (_, i) => ({ action: 'keydown', code: 4 + (i % 20), delay: 20 + i }));
-    const acts1 = Array.from({ length: 1100 }, (_, i) => ({ action: 'keyup', code: 5 + (i % 20), delay: 100 + i }));
+    // Slot 0 has 600 unique actions; Slot 1 has 600 DIFFERENT unique actions -> 1200 total unique > 1007
+    const acts0 = Array.from({ length: 600 }, (_, i) => ({ action: 'keydown', code: 4 + (i % 20), delay: 20 + i }));
+    const acts1 = Array.from({ length: 600 }, (_, i) => ({ action: 'keyup', code: 5 + (i % 20), delay: 100 + i }));
 
     const slots = [
       { id: 0, type: 0, actions: acts0 },
@@ -327,8 +327,8 @@ describe('Adversarial Mocked Transport & Safety Verification', () => {
 
     attachMockDevice(mock);
 
-    // Duplicate 1200-action macro in slot 0 (type 0) and slot 1 (type 1) -> 2400 actions total, but only 1200 unique
-    const duplicateActions = Array.from({ length: 1200 }, (_, i) => ({
+    // Duplicate 700-action macro in slot 0 (type 0) and slot 1 (type 1) -> 1400 actions total, but only 700 unique
+    const duplicateActions = Array.from({ length: 700 }, (_, i) => ({
       action: i % 2 === 0 ? 'keydown' : 'keyup',
       code: 4 + (i % 15),
       delay: 30
@@ -1050,5 +1050,131 @@ describe('Adversarial Mocked Transport & Safety Verification', () => {
     assert.ok(prep.identity);
     assert.equal(prep.identity.firmwareRaw, 0x0114);
     assert.ok(infoReads >= 2, 'identity must come from a retried non-echoed GET_INFO');
+  });
+
+  test('30. queryStatus isolates required handshake from optional name fetch and preserves timeout reconnect safety', async () => {
+    // 1. Explicit error status on optional GET_CUSTOM_PARAM falls back to defaults without breaking connection
+    const mockOptionalFail = new MockGlwMemoryDevice();
+    mockOptionalFail.failCommands.add(protocol.COMMANDS.GET_CUSTOM_PARAM);
+    transport.installTestAdapter(mockOptionalFail);
+    assert.strictEqual(transport.needsReconnect, false);
+
+    const optionalStatus = await transport.queryStatus();
+    assert.strictEqual(optionalStatus.readSuccess, true, 'queryStatus must succeed when optional GET_CUSTOM_PARAM returns error status');
+    assert.strictEqual(optionalStatus.needsReconnect, false, 'explicit failure on optional command must not set needsReconnect');
+    assert.strictEqual(transport.needsReconnect, false, 'transport.needsReconnect must stay false');
+    assert.strictEqual(transport.statusError, null, 'transport.statusError must be null');
+    assert.strictEqual(transport.lastState.profileNamesSource, 'default');
+    assert.ok(optionalStatus.lighting, 'funcConfig must still be read when optional names fails');
+    assert.ok(optionalStatus.settings, 'settings must still be read when optional names fails');
+
+    // 2. Required command (GET_BASE) timeout marks needsReconnect and preserves failure path
+    transport.disconnect();
+    const mockRequiredDrop = new MockGlwMemoryDevice();
+    mockRequiredDrop.delayCommands.set(protocol.COMMANDS.GET_BASE, 2000);
+    transport.installTestAdapter(mockRequiredDrop);
+    const requiredStatus = await transport.queryStatus();
+    assert.strictEqual(requiredStatus.readSuccess, false, 'queryStatus must fail when required GET_BASE times out');
+    assert.strictEqual(requiredStatus.needsReconnect, true, 'required timeout must mark needsReconnect');
+    assert.strictEqual(transport.needsReconnect, true);
+    assert.notStrictEqual(transport.statusError, null, 'statusError must not be cleared when required read times out');
+
+    // 3. Wire timeout on optional command also enforces safe reconnect to prevent late matching responses poisoning queue
+    transport.disconnect();
+    const mockOptionalTimeout = new MockGlwMemoryDevice();
+    mockOptionalTimeout.delayCommands.set(protocol.COMMANDS.GET_CUSTOM_PARAM, 2000);
+    transport.installTestAdapter(mockOptionalTimeout);
+    const optTimeoutStatus = await transport.queryStatus();
+    assert.strictEqual(optTimeoutStatus.readSuccess, false, 'wire timeout on optional command must fail safe to prevent queue poisoning');
+    assert.strictEqual(optTimeoutStatus.needsReconnect, true, 'wire timeout on optional command must set needsReconnect');
+    assert.strictEqual(transport.needsReconnect, true);
+    assert.notStrictEqual(transport.statusError, null, 'statusError must be set on optional timeout');
+  });
+
+  test('31. Physical safety alias protection: SET_MACROS bounded to 4096 bytes protects profile 0 colors and keylayers in aliasMode', async () => {
+    const mock = new MockGlwMemoryDevice({ aliasMode: true });
+    attachMockDevice(mock);
+
+    // Initial state check: mock memory is seeded and synced
+    const initialColors = Buffer.from(mock.colors);
+    const initialUserKeys = Buffer.from(mock.userKeys);
+    assert.ok(initialColors.subarray(0, 2048).equals(mock.macros.subarray(4096, 6144)), 'mock aliasMode: profile 0 colors mirrored at macros 4096..6143');
+    assert.ok(initialUserKeys.subarray(0, 2048).equals(mock.macros.subarray(6144, 8192)), 'mock aliasMode: profile 0 userKeys mirrored at macros 6144..8191');
+
+    // 1. Direct macro upload (applyMacros) preserves colors and all keylayers
+    const safeActions = [
+      { action: 'keydown', code: 4, delay: 10 },
+      { action: 'keyup', code: 4, delay: 20 }
+    ];
+    const macroRes = await transport.applyMacros([
+      { id: 0, type: 0, actions: safeActions }
+    ]);
+    assert.strictEqual(macroRes.success, true, 'applyMacros must succeed');
+    const macroWrites = mock.writtenBuffers.filter((b) => b[2] === protocol.COMMANDS.SET_MACROS);
+    assert.ok(macroWrites.length > 0, 'SET_MACROS writes dispatched');
+    for (const b of macroWrites) {
+      const off = b[6] | (b[7] << 8);
+      const sz = b[5];
+      assert.ok(off + sz <= protocol.MACRO_WRITABLE_LIMIT, `SET_MACROS write at [${off}..${off + sz}] exceeded safe limit ${protocol.MACRO_WRITABLE_LIMIT}`);
+    }
+    assert.ok(mock.colors.equals(initialColors), 'direct applyMacros must preserve colors');
+    assert.ok(mock.userKeys.equals(initialUserKeys), 'direct applyMacros must preserve all keylayers');
+
+    // 2. applyProfile changing both a key and color along with a macro:
+    // Under aliasMode, writing 8192 bytes via SET_MACROS would replay the stale macro read (captured before key/color updates)
+    // over the newly written colors and keys. With the 4096-byte bound, fresh key and color are retained.
+    mock.writtenBuffers.length = 0;
+    const exported = await transport.exportProfile(0);
+    assert.strictEqual(exported.success, true, exported.error);
+    const profileData = exported.data;
+
+    // Mutate color for slot 11
+    profileData.perKeyRgb['11'] = '#123456';
+    // Mutate key for layer 0, slot 1
+    profileData.layers['0']['1'] = { type: 16, code1: 0, code2: 5 };
+    // Mutate macro slot 1
+    profileData.macros[1] = {
+      id: 1,
+      type: 1,
+      actions: [{ action: 'keydown', code: 6, delay: 15 }]
+    };
+
+    const applyProfRes = await transport.applyProfile(profileData, 0);
+    assert.strictEqual(applyProfRes.success, true, applyProfRes.error);
+
+    // Verify written SET_MACROS commands did not touch 4096..8191
+    const profMacroWrites = mock.writtenBuffers.filter((b) => b[2] === protocol.COMMANDS.SET_MACROS);
+    for (const b of profMacroWrites) {
+      const off = b[6] | (b[7] << 8);
+      const sz = b[5];
+      assert.ok(off + sz <= protocol.MACRO_WRITABLE_LIMIT, `SET_MACROS in applyProfile at [${off}..${off + sz}] exceeded safe limit ${protocol.MACRO_WRITABLE_LIMIT}`);
+    }
+
+    // Read back colors and keys from hardware (mock) to verify imported values are retained
+    const colorReadRes = await transport.readRange(protocol.COMMANDS.GET_KEY_COLOR, 0, 384);
+    assert.strictEqual(colorReadRes.success, true);
+    assert.strictEqual(colorReadRes.data[33], 0x12, 'Slot 11 Red color retained');
+    assert.strictEqual(colorReadRes.data[34], 0x34, 'Slot 11 Green color retained');
+    assert.strictEqual(colorReadRes.data[35], 0x56, 'Slot 11 Blue color retained');
+
+    const keyReadRes = await transport.readRange(protocol.COMMANDS.GET_USER_KEY_MATRIX, 0, 512);
+    assert.strictEqual(keyReadRes.success, true);
+    assert.strictEqual(keyReadRes.data[3], 16, 'Layer 0 slot 1 type retained');
+    assert.strictEqual(keyReadRes.data[4], 0, 'Layer 0 slot 1 code1 retained');
+    assert.strictEqual(keyReadRes.data[5], 5, 'Layer 0 slot 1 code2 retained');
+
+    // 3. Oversized unique macro rejects before ANY HID writes
+    mock.writtenBuffers.length = 0;
+    const giantUniqueActions = Array.from({ length: 1008 }, (_, i) => ({
+      action: 'keydown',
+      code: 4 + (i % 20),
+      delay: 10 + i
+    }));
+    const overRes = await transport.applyMacros([
+      { id: 0, type: 0, actions: giantUniqueActions }
+    ]);
+    assert.strictEqual(overRes.success, false, 'oversized unique macro must be rejected');
+    assert.match(overRes.error, /capacity exceeded/i);
+    assert.strictEqual(mock.writtenBuffers.length, 0, 'oversized unique macro must dispatch zero HID writes');
   });
 });
